@@ -15,4 +15,6 @@ config_override.json
 .env
 .env.*
 tools/downloads/
+*.dll
+test-output/
 

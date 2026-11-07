@@ -1,0 +1,27 @@
+[
+  {
+    "file": "palm_detection_mediapipe_2023feb.onnx",
+    "url": "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/palm_detection_mediapipe/palm_detection_mediapipe_2023feb.onnx",
+    "sha256": "78ff51c38496b7fc8b8ebdb6cc8c1abb02fa6c38427c6848254cdaba57fcce7c"
+  },
+  {
+    "file": "handpose_estimation_mediapipe_2023feb.onnx",
+    "url": "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/handpose_estimation_mediapipe/handpose_estimation_mediapipe_2023feb.onnx",
+    "sha256": "db0898ae717b76b075d9bf563af315b29562e11f8df5027a1ef07b02bef6d81c"
+  },
+  {
+    "file": "palm-LICENSE",
+    "url": "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/palm_detection_mediapipe/LICENSE",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  {
+    "file": "handpose-LICENSE",
+    "url": "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/handpose_estimation_mediapipe/LICENSE",
+    "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+  },
+  {
+    "file": "onnxruntime-win-x64-1.23.2.zip",
+    "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip",
+    "sha256": "0b38df9af21834e41e73d602d90db5cb06dbd1ca618948b8f1d66d607ac9f3cd"
+  }
+]

@@ -2,6 +2,20 @@
 
 As mudanças são registradas por versão. Datas no formato AAAA-MM-DD.
 
+## 0.2.0 — 2026-11-07
+
+- Aplicativo Windows nativo em Rust no branch `Rust`, sem processo Python.
+- Interface com câmera, letra, confiança, progresso, seleção de câmera e voz.
+- MediaPipe via modelos ONNX do OpenCV Zoo e ONNX Runtime CPU.
+- Inferência MLP com pesos originais, verificada numericamente contra Python.
+- Reprodução nativa do cache MP3 gerado pelo Google TTS.
+- Pacote portátil com modelos, DLL, licenças e manifesto SHA-256.
+- Testes de normalização, estabilização e integração com imagens locais.
+- Empacotamento Python exclui bibliotecas de treinamento desnecessárias.
+
+O extrator Rust difere do grafo de tracking Python e apresentou diferenças em
+imagens de teste; ver `docs/VALIDATION.md`. Movimento permanece experimental.
+
 ## 0.1.0 — 2026-11-07
 
 - Importação da implementação Python original, desenvolvida com auxílio do Claude.

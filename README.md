@@ -129,3 +129,10 @@ Datasets, imagens de treinamento, backups, ambientes virtuais e builds não são
 versionados. O repositório é privado. As licenças das bibliotecas e modelos de
 terceiros continuam aplicáveis; esta importação não atribui uma nova licença ao
 código original nem aos datasets.
+
+## Versão Rust
+
+O branch `Rust` contém a implementação nativa Windows, instruções de compilação,
+testes e empacotamento em [docs/RUST.md](docs/RUST.md). O aplicativo usa os mesmos
+pesos da MLP e áudios, com interface equivalente em egui. Os resultados e as
+diferenças do extrator de landmarks estão documentados em `docs/VALIDATION.md`.
