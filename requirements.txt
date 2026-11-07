@@ -1,0 +1,27 @@
+PySide6>=6.6.0
+PySide6-Addons>=6.6.0
+opencv-python>=4.9.0
+numpy>=1.26.0
+
+# Reconhecimento de mão (MediaPipe) - necessário no app E no treino/coleta
+mediapipe>=0.10.14
+
+# scikit-learn: usado APENAS para treinar (train_classifier.py), no seu
+# ambiente de desenvolvimento. O app final (main.py/classifier.py) faz a
+# inferência com numpy puro a partir dos pesos exportados (.npz) - não
+# precisa de scikit-learn nem scipy dentro do .exe. Se for gerar o .exe
+# numa venv separada só para isso, pode deixar essa linha de fora dela.
+scikit-learn>=1.4.0
+
+# PyTorch: usado APENAS para treinar o classificador de gestos
+# (train_movement_classifier.py - letras H, J, K, X, Z), também só no
+# seu ambiente de dev. Mesma lógica do scikit-learn acima: o app final
+# não importa torch em nenhum momento, só lê os pesos exportados (.npz)
+# e refaz a LSTM manualmente com numpy. Instale com o índice CPU-only
+# (bem mais leve que a versão com CUDA, e é tudo que você precisa aqui):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# Deixe de fora do requirements.txt usado só pra rodar o app/gerar o .exe.
+
+# TTS (Google Text-to-Speech) + player de áudio
+gTTS>=2.5.0
+pygame>=2.5.0
