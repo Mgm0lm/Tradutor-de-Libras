@@ -99,7 +99,12 @@ pub struct Stabilizer {
     last_at: f64,
 }
 impl Stabilizer {
-    pub fn update(&mut self, letter: Option<String>, now: f64) -> (Option<String>, f32, bool) {
+    pub fn update(
+        &mut self,
+        letter: Option<String>,
+        now: f64,
+        hold_seconds: f64,
+    ) -> (Option<String>, f32, bool) {
         if letter != self.current {
             self.current = letter.clone();
             self.since = now;
@@ -108,8 +113,9 @@ impl Stabilizer {
         let Some(ref l) = letter else {
             return (None, 0.0, false);
         };
-        let progress = ((now - self.since) / 0.8).clamp(0.0, 1.0) as f32;
-        let confirmed = progress >= 1.0 && !self.confirmed_current && self.confirm(l, now);
+        let held = now - self.since;
+        let progress = (held / hold_seconds).clamp(0.0, 1.0) as f32;
+        let confirmed = held >= hold_seconds && !self.confirmed_current && self.confirm(l, now);
         if confirmed {
             self.confirmed_current = true;
         }
@@ -140,15 +146,15 @@ mod tests {
     #[test]
     fn stability_and_cooldown() {
         let mut s = Stabilizer::default();
-        assert!(!s.update(Some("A".into()), 10.0).2);
-        assert!(s.update(Some("A".into()), 10.81).2);
-        assert!(!s.update(Some("A".into()), 11.0).2);
-        assert!(!s.update(Some("A".into()), 12.7).2);
-        assert!(!s.update(Some("L".into()), 13.0).2);
-        assert!(s.update(Some("L".into()), 13.81).2);
-        assert!(!s.update(Some("L".into()), 20.0).2);
-        assert_eq!(s.update(None, 21.0).1, 0.0);
-        assert!(!s.update(Some("L".into()), 22.0).2);
-        assert!(s.update(Some("L".into()), 22.81).2);
+        assert!(!s.update(Some("A".into()), 10.0, 0.8).2);
+        assert!(s.update(Some("A".into()), 10.81, 0.8).2);
+        assert!(!s.update(Some("A".into()), 12.7, 0.8).2);
+        assert!(!s.update(Some("L".into()), 13.0, 0.45).2);
+        assert!(!s.update(Some("L".into()), 13.44, 0.45).2);
+        assert!(s.update(Some("L".into()), 13.46, 0.45).2);
+        assert!(!s.update(Some("L".into()), 20.0, 0.45).2);
+        assert_eq!(s.update(None, 21.0, 0.8).1, 0.0);
+        assert!(!s.update(Some("L".into()), 22.0, 0.8).2);
+        assert!(s.update(Some("L".into()), 22.81, 0.8).2);
     }
 }

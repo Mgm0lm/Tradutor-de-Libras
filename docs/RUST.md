@@ -13,6 +13,11 @@ não inicia Python nem depende de um ambiente virtual na máquina de destino.
   do pacote e reproduzidos pela API multimídia do Windows, sem codec MP3 externo.
   A distribuição inclui o cache; gerar novos áudios é uma etapa de preparação.
 
+O controle **Estabilização** ajusta o tempo mínimo para confirmar uma letra
+estática (0,45 a 1,20 s, padrão 0,80 s). Um valor menor responde mais cedo e
+pode aceitar poses transitórias. O modo de movimento decide ao fim do gesto.
+Quando outra letra é confirmada, o WAV mais recente assume a reprodução.
+
 A extração de pontos usa uma implementação nativa de detecção de palma e recorte
 orientado; não é o mesmo grafo de rastreamento da API Python `mp.solutions`.
 Por isso a equivalência numérica da MLP não garante equivalência de ponta a ponta.

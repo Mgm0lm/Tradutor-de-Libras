@@ -54,3 +54,33 @@ com relógio controlado e em Rust no teste de estabilização.
 - Segmentação testada com translação do pulso, perda de mão e limite de 2 s.
 - K, X e Z não foram treinadas. A precisão do movimento ao vivo ainda requer
   avaliação em sessões independentes e com exemplos negativos reais.
+
+## Diagnóstico de generalização — 2026-11-08
+
+- A base externa tem 72.560 quadros e 21 classes. A base local tem 1.803
+  quadros e 9 classes (A, B, C, D, E, F, G, L, O). Os arquivos identificam
+  a letra, sem identificar pessoa ou sessão.
+- O modelo distribuído acertou 99,97% dos quadros externos e 97,84% dos
+  locais. Essas bases são entradas do treinamento e os números descrevem
+  ajuste aos dados conhecidos.
+- Experimento separado, sem alterar os pesos distribuídos. Para cada uma
+  das nove letras comuns, uma MLP de camadas (64, 32) foi treinada com 600
+  quadros externos e avaliada em outros 400 quadros externos, usando a
+  semente 42. Acertou 99,72% nos 3.600 externos reservados e 60,12% nos
+  1.803 locais, de uma fonte que não participou do treino. L caiu de
+  100% para 3,5%, e G, de 100% para 33,2%.
+- A diferença indica sensibilidade à fonte. A divisão externa foi por
+  quadro e pode incluir imagens correlacionadas de uma mesma pessoa. Para
+  estimar a precisão ao vivo, reserve gravações por pessoa e sessão e use
+  os mesmos clipes para comparar extração, classificação e estabilização.
+
+## Latência do áudio Rust — 2026-11-08
+
+- Antes da mudança, os 23 arquivos WAV tinham 70 a 100 ms até o início
+  estimado da voz. Os arquivos novos deixam cerca de 25 ms antes desse ponto.
+  A verificação confirmou que o PCM dentro da janela recortada é idêntico.
+- A duração total de A caiu de 623 para 430 ms e a de L, de 863 para
+  630 ms. Esses tempos descrevem os arquivos, sem medir a saída do alto-falante.
+- O Windows recebe pedidos de reprodução WAV assíncronos. Uma nova letra
+  pode interromper o áudio anterior. A estabilização de 800 ms continua
+  como padrão e pode ser ajustada na interface.

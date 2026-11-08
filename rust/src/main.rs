@@ -265,7 +265,14 @@ unsafe extern "system" {
     fn mciSendStringW(command: *const u16, result: *mut u16, length: u32, window: isize) -> u32;
     fn PlaySoundW(sound: *const u16, module: isize, flags: u32) -> i32;
 }
-fn play_audio(path: &std::path::Path) -> Result<()> {
+fn stop_wave_audio() {
+    #[cfg(windows)]
+    unsafe {
+        PlaySoundW(std::ptr::null(), 0, 0);
+    }
+}
+
+fn play_audio(path: &std::path::Path, asynchronous: bool) -> Result<()> {
     #[cfg(windows)]
     {
         let wav = path.with_extension("wav");
@@ -276,11 +283,16 @@ fn play_audio(path: &std::path::Path) -> Result<()> {
                 .encode_utf16()
                 .chain(Some(0))
                 .collect();
-            if unsafe { PlaySoundW(wide.as_ptr(), 0, 0x00020000 | 0x0002) } == 0 {
+            const SND_FILENAME: u32 = 0x00020000;
+            const SND_NODEFAULT: u32 = 0x0002;
+            const SND_ASYNC: u32 = 0x0001;
+            let flags = SND_FILENAME | SND_NODEFAULT | if asynchronous { SND_ASYNC } else { 0 };
+            if unsafe { PlaySoundW(wide.as_ptr(), 0, flags) } == 0 {
                 return Err("Não foi possível reproduzir o áudio WAV".into());
             }
             return Ok(());
         }
+        stop_wave_audio();
         let command = |text: String| -> u32 {
             let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
             unsafe { mciSendStringW(wide.as_ptr(), std::ptr::null_mut(), 0, 0) }
@@ -302,6 +314,11 @@ fn play_audio(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+enum AudioRequest {
+    Speak(String),
+    Stop,
+}
+
 struct App {
     shared: Arc<Mutex<Shared>>,
     control: Arc<Control>,
@@ -315,12 +332,13 @@ struct App {
     progress: f32,
     movement_visible_until: f64,
     threshold: f32,
+    hold_seconds: f64,
     desync: bool,
     tts: bool,
     selected: u32,
     cameras: Vec<(u32, String)>,
     audio: mpsc::SyncSender<()>,
-    pending_audio: Arc<Mutex<Option<String>>>,
+    pending_audio: Arc<Mutex<Option<AudioRequest>>>,
     audio_error: Arc<Mutex<Option<String>>>,
 }
 impl App {
@@ -345,20 +363,25 @@ impl App {
         let selected = cameras[0].0;
         control.camera.store(selected, Ordering::Relaxed);
         let (audio, rx) = mpsc::sync_channel(1);
-        let pending_audio = Arc::new(Mutex::new(None::<String>));
+        let pending_audio = Arc::new(Mutex::new(None::<AudioRequest>));
         let pending = pending_audio.clone();
         let audio_error = Arc::new(Mutex::new(None));
         let errors = audio_error.clone();
         let audio_base = base.clone();
         std::thread::spawn(move || {
             while rx.recv().is_ok() {
-                let letter = pending.lock().unwrap().take();
-                let Some(letter) = letter else { continue };
-                let path = audio_base.join("tts_cache").join(format!("{letter}.mp3"));
-                if let Err(e) = play_audio(&path) {
-                    *errors.lock().unwrap() = Some(e.to_string());
+                let request = pending.lock().unwrap().take();
+                match request {
+                    Some(AudioRequest::Speak(letter)) => {
+                        let path = audio_base.join("tts_cache").join(format!("{letter}.mp3"));
+                        let error = play_audio(&path, true).err().map(|e| e.to_string());
+                        *errors.lock().unwrap() = error;
+                    }
+                    Some(AudioRequest::Stop) => stop_wave_audio(),
+                    None => {}
                 }
             }
+            stop_wave_audio();
         });
         start_workers(base, shared.clone(), control.clone(), movement_enabled);
         Self {
@@ -374,6 +397,7 @@ impl App {
             progress: 0.0,
             movement_visible_until: 0.0,
             threshold: 0.7,
+            hold_seconds: 0.8,
             desync: true,
             tts: true,
             selected,
@@ -386,9 +410,13 @@ impl App {
 
     fn speak(&self, letter: &str) {
         if self.tts {
-            *self.pending_audio.lock().unwrap() = Some(letter.to_owned());
-            let _ = self.audio.try_send(());
+            self.request_audio(AudioRequest::Speak(letter.to_owned()));
         }
+    }
+
+    fn request_audio(&self, request: AudioRequest) {
+        *self.pending_audio.lock().unwrap() = Some(request);
+        let _ = self.audio.try_send(());
     }
 }
 impl Drop for App {
@@ -421,32 +449,34 @@ impl eframe::App for App {
         if let Some(letter) = gesture
             && self.stabilizer.confirm(&letter, now)
         {
-            self.stabilizer.update(None, now);
+            self.stabilizer.update(None, now, self.hold_seconds);
             self.movement_visible_until = now + 0.65;
             self.letter = Some(letter.clone());
             self.confirmed_letter = Some(letter.clone());
             self.progress = 1.0;
             self.speak(&letter);
         }
-        if now >= self.movement_visible_until {
-            if let Some(d) = &detection {
-                if d.frame.id != self.last_detection {
-                    self.last_detection = d.frame.id;
-                    let (l, p, confirmed) = self
-                        .stabilizer
-                        .update(d.letter.clone(), self.start.elapsed().as_secs_f64());
+        if let Some(d) = &detection {
+            if d.frame.id != self.last_detection {
+                self.last_detection = d.frame.id;
+                let (l, p, confirmed) =
+                    self.stabilizer
+                        .update(d.letter.clone(), now, self.hold_seconds);
+                if confirmed || now >= self.movement_visible_until {
                     self.letter = l;
                     self.progress = p;
-                    if confirmed {
-                        self.confirmed_letter = self.letter.clone();
-                        if let Some(letter) = self.letter.as_deref() {
-                            self.speak(letter);
-                        }
+                }
+                if confirmed {
+                    self.movement_visible_until = 0.0;
+                    self.confirmed_letter = self.letter.clone();
+                    if let Some(letter) = self.letter.as_deref() {
+                        self.speak(letter);
                     }
                 }
-            } else {
-                self.stabilizer
-                    .update(None, self.start.elapsed().as_secs_f64());
+            }
+        } else {
+            self.stabilizer.update(None, now, self.hold_seconds);
+            if now >= self.movement_visible_until {
                 self.letter = None;
                 self.progress = 0.0;
             }
@@ -571,6 +601,9 @@ impl eframe::App for App {
                                         self.control
                                             .threshold
                                             .store(self.threshold.to_bits(), Ordering::Relaxed);
+                                        ui.add(egui::Slider::new(&mut self.hold_seconds, 0.45..=1.20)
+                                            .step_by(0.05).fixed_decimals(2).suffix(" s").text("Estabilização"))
+                                            .on_hover_text("Tempo de confirmação da letra estática. Tempos menores podem aumentar os falsos positivos.");
                                     });
                                 });
                             ui.label(format!(
@@ -646,7 +679,7 @@ impl eframe::App for App {
                                     .changed()
                                     && !self.tts
                                 {
-                                    self.pending_audio.lock().unwrap().take();
+                                    self.request_audio(AudioRequest::Stop);
                                 }
                                 if ui.button("Repetir").clicked() && self.tts {
                                     if let Some(l) = &self.confirmed_letter {
@@ -679,11 +712,22 @@ fn run() -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or(std::env::current_exe()?.parent().unwrap().to_path_buf());
     if let Some(i) = args.iter().position(|s| s == "--audio-test") {
-        play_audio(
-            &base
-                .join("tts_cache")
-                .join(format!("{}.mp3", args.get(i + 1).ok_or("Letra ausente")?)),
-        )?;
+        let letters = &args[i + 1..];
+        if letters.is_empty()
+            || letters
+                .iter()
+                .any(|l| l.len() != 1 || !l.as_bytes()[0].is_ascii_uppercase())
+        {
+            return Err("Informe uma ou mais letras de A a Z após --audio-test".into());
+        }
+        for (index, letter) in letters.iter().enumerate() {
+            let start = Instant::now();
+            play_audio(
+                &base.join("tts_cache").join(format!("{letter}.mp3")),
+                index + 1 < letters.len(),
+            )?;
+            println!("{letter}: {:.1} ms", start.elapsed().as_secs_f64() * 1000.0);
+        }
         return Ok(());
     }
     if let Some(i) = args.iter().position(|s| s == "--evaluate") {

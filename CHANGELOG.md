@@ -2,6 +2,16 @@
 
 As mudanças são registradas por versão. Datas no formato AAAA-MM-DD.
 
+## 0.3.1 — 2026-11-08 — Rust
+
+- A fala WAV começa sem esperar o fim do áudio anterior. Desativar o TTS
+  interrompe a fala em andamento.
+- O cache WAV preserva a fala e reduz o silêncio no início e no fim.
+- O controle **Estabilização** ajusta a confirmação de letras estáticas de
+  0,45 a 1,20 s. O padrão continua em 0,80 s.
+- A próxima letra estática pode começar a estabilizar enquanto o último
+  gesto de movimento ainda aparece na tela.
+
 ## 0.3.0 — 2026-11-07 — experimental
 
 - LSTM compartilhada entre Python e Rust, com pesos experimentais para H e J.
