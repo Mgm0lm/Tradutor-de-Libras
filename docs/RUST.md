@@ -44,6 +44,8 @@ cargo test --manifest-path rust/Cargo.toml --locked
 ```
 
 Extraia o ZIP e abra `TradutorLibras.exe`, mantendo DLL, modelos e cache juntos.
+O pacote experimental inclui `Iniciar-com-movimento.cmd` para ativar a LSTM
+de H e J. Consulte [MOVIMENTO.md](MOVIMENTO.md) para coleta e treinamento.
 As pastas de versões anteriores não são sobrescritas. `SHA256.json` permite
 conferir os arquivos distribuídos.
 

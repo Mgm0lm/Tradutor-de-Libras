@@ -44,17 +44,18 @@ class LetterStabilizer:
 
         just_confirmed = False
         if held_for >= config.MIN_STABLE_SECONDS and not self._confirmed_current:
-            cooldown_ok = (
-                letter != self._last_confirmed_letter
-                or (now - self._last_confirmed_at) >= config.COOLDOWN_SECONDS
-            )
-            if cooldown_ok:
-                self._last_confirmed_letter = letter
-                self._last_confirmed_at = now
+            if self.confirm(letter, now):
                 self._confirmed_current = True
                 just_confirmed = True
 
         return letter, progress, just_confirmed
+
+    def confirm(self, letter, now):
+        if letter == self._last_confirmed_letter and now - self._last_confirmed_at < config.COOLDOWN_SECONDS:
+            return False
+        self._last_confirmed_letter = letter
+        self._last_confirmed_at = now
+        return True
 
     def reset(self):
         self._current_letter = None

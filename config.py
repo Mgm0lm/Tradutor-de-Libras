@@ -32,6 +32,8 @@ MOVEMENT_LETTERS = ["H", "J", "K", "X", "Z"]
 
 MOVEMENT_MODEL_PATH = os.path.join(BASE_DIR, "modelo", "movement_model.npz")
 MOVEMENT_DATASET_DIR = os.path.join(BASE_DIR, "dataset", "movement_sequences")
+MOVEMENT_TRAJECTORY_DIR = os.path.join(BASE_DIR, "dataset", "movement_trajectory")
+ENABLE_MOVEMENT = False  # Experimental; opt in through config_override.json.
 
 # Duração MÁXIMA real (em segundos) de um gesto - funciona como teto de
 # segurança: se a mão não parar de se mover antes disso, classifica com

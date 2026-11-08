@@ -9,10 +9,9 @@ não traduz frases ou a gramática de Libras.
 
 A versão Python usa **MediaPipe Hands + MLP**, com inferência NumPy. O modelo
 incluído reconhece 21 classes: **A B C D E F G I L M N O P Q R S T U V W Y**.
-Há código preliminar de LSTM para H, J, K, X e Z, mas a importação original não
-contém pesos treinados de movimento. A ausência desses pesos mantém somente
-o reconhecimento estático. Não interprete a presença do código como validação
-das 26 letras. Veja [validação](docs/VALIDATION.md) e [changelog](CHANGELOG.md).
+Há também um modelo LSTM experimental para **H e J**, ativado sob demanda.
+**K, X e Z** ainda exigem amostras reais. Veja [movimento](docs/MOVIMENTO.md),
+[validação](docs/VALIDATION.md) e [changelog](CHANGELOG.md).
 
 ## Como funciona
 
@@ -22,10 +21,11 @@ das 26 letras. Veja [validação](docs/VALIDATION.md) e [changelog](CHANGELOG.md
    produzindo 63 valores. Coleta, treinamento e inferência usam a mesma função.
 4. A MLP aplica camadas densas, ReLU e softmax. Os pesos são lidos de NPZ com
    `allow_pickle=False`; scikit-learn não é necessário para inferir.
-5. Uma classe acima do limiar deve permanecer estável por 0,8 s. O intervalo
-   entre confirmações repetidas da mesma letra é de 1,8 s.
+5. Uma classe acima do limiar deve permanecer estável por 0,8 s. Cada posição
+   contínua confirma uma vez. Para repetir a mesma letra automaticamente,
+   interrompa o gesto e aguarde 1,8 s desde a confirmação anterior.
 6. PySide6 exibe vídeo, esqueleto, letra e progresso. gTTS gera áudio e pygame
-   reproduz o cache local. A câmera e os frames não são enviados ao Google;
+   reproduz o cache local. Uma nova confirmação substitui a fala pendente. A câmera e os frames não são enviados ao Google;
    a geração de voz envia o texto da letra ao serviço.
 
 ## Executar no Windows
@@ -82,19 +82,13 @@ contínua, S para salvar e R para desfazer. O treinamento exporta pesos MLP para
 de pessoas, sessões, iluminação e câmera são essenciais; separar frames muito
 parecidos entre treino e teste pode inflar a avaliação.
 
-## Movimento (implementação original, experimental)
+## Movimento experimental
 
-```powershell
-.\venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-.\venv\Scripts\python.exe collect_movement.py
-.\venv\Scripts\python.exe train_movement_classifier.py
-```
-
-O coletor registra sequências, reamostradas em 20 passos. A LSTM de uma camada
-é treinada com PyTorch e exportada como matrizes NPZ; o aplicativo executa o
-forward com NumPy. O conjunto local inicial contém somente H e J. Os dados
-legados removem o deslocamento do pulso frame a frame: isso limita a descrição
-da trajetória e exige revisão antes de considerar movimento validado.
+Execute `python main.py --movement` ou abra `Iniciar-com-movimento.cmd` no
+pacote que inclui a LSTM. O modelo distribuído trabalha com H e J. Uma posição
+estática mantida produz uma confirmação; o botão Repetir toca a última letra.
+Consulte [docs/MOVIMENTO.md](docs/MOVIMENTO.md) para coletar novos gestos,
+treinar as cinco classes e gerar os mesmos pesos para Python e Rust.
 
 ## Gerar executável Python
 

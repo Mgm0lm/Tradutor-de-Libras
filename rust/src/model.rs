@@ -109,15 +109,20 @@ impl Stabilizer {
             return (None, 0.0, false);
         };
         let progress = ((now - self.since) / 0.8).clamp(0.0, 1.0) as f32;
-        let confirmed = progress >= 1.0
-            && !self.confirmed_current
-            && (self.last.as_ref() != Some(l) || now - self.last_at >= 1.8);
+        let confirmed = progress >= 1.0 && !self.confirmed_current && self.confirm(l, now);
         if confirmed {
             self.confirmed_current = true;
-            self.last = letter.clone();
-            self.last_at = now;
         }
         (letter, progress, confirmed)
+    }
+
+    pub fn confirm(&mut self, letter: &str, now: f64) -> bool {
+        if self.last.as_deref() == Some(letter) && now - self.last_at < 1.8 {
+            return false;
+        }
+        self.last = Some(letter.to_owned());
+        self.last_at = now;
+        true
     }
 }
 

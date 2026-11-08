@@ -1,150 +1,113 @@
-"""
-Treina o classificador de GESTOS (H, J, K, X, Z) a partir das
-sequências gravadas por collect_movement.py.
-
-Usa PyTorch (nn.LSTM) só AQUI, no seu ambiente de desenvolvimento -
-igual ao scikit-learn no train_classifier.py, PyTorch NÃO precisa
-estar instalado no .exe final. Depois de treinar, este script extrai
-os pesos brutos da LSTM (as mesmas matrizes que o PyTorch usa
-internamente) e salva num .npz simples. O app (classifier.py) refaz o
-forward pass manualmente com numpy - sem PyTorch em tempo de execução.
-
-Uso:
-    pip install torch --index-url https://download.pytorch.org/whl/cpu
-    python train_movement_classifier.py
-"""
-
-import os
+"""Train the shared LSTM; legacy data is opt-in and supports only present labels."""
+import argparse
+import csv
+import json
+from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn as nn
-from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.model_selection import train_test_split
+from torch import nn
+from sklearn.metrics import classification_report
 
 import config
+from movement import STEPS
 
-HIDDEN_SIZE = 32
-EPOCHS = 150
-LEARNING_RATE = 0.01
+REJECT = "_"
+SEED = 42
 
 
 class LSTMClassifier(nn.Module):
-    def __init__(self, input_size, hidden_size, num_classes):
+    def __init__(self, features, classes):
         super().__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True)
-        self.fc = nn.Linear(hidden_size, num_classes)
+        self.lstm = nn.LSTM(features, 32, batch_first=True)
+        self.fc = nn.Linear(32, classes)
 
     def forward(self, x):
-        out, _ = self.lstm(x)
-        last_step = out[:, -1, :]  # usa o estado oculto do último frame do gesto
-        return self.fc(last_step)
+        sequence, _ = self.lstm(x)
+        return self.fc(sequence[:, -1])
 
 
-def load_dataset():
-    X, y = [], []
-    for letter in config.MOVEMENT_LETTERS:
-        letter_dir = os.path.join(config.MOVEMENT_DATASET_DIR, letter)
-        if not os.path.isdir(letter_dir):
-            continue
-        files = sorted(f for f in os.listdir(letter_dir) if f.endswith(".npy"))
-        for filename in files:
-            arr = np.load(os.path.join(letter_dir, filename))
-            if arr.shape[0] != config.MOVEMENT_STEPS:
-                continue  # amostra com tamanho inconsistente - ignora
-            X.append(arr)
-            y.append(letter)
-        print(f"  {letter}: {len(files)} amostras")
-    return np.array(X, dtype=np.float32), np.array(y)
+def load_samples(directory, features):
+    data = {}
+    for letter in [*config.MOVEMENT_LETTERS, REJECT]:
+        sequences = []
+        for path in sorted((directory / letter).glob('*.npy')):
+            sample = np.load(path, allow_pickle=False)
+            if sample.shape != (STEPS, features) or not np.isfinite(sample).all():
+                raise ValueError(f'Amostra inválida: {path}')
+            sequences.append(sample.astype(np.float32))
+        if sequences:
+            data[letter] = sequences
+    return data
 
 
-def export_weights(model, labels_sorted, path):
-    lstm = model.lstm
-    fc = model.fc
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    np.savez(
-        path,
-        W_ih=lstm.weight_ih_l0.detach().numpy(),
-        W_hh=lstm.weight_hh_l0.detach().numpy(),
-        b_ih=lstm.bias_ih_l0.detach().numpy(),
-        b_hh=lstm.bias_hh_l0.detach().numpy(),
-        W_fc=fc.weight.detach().numpy(),
-        b_fc=fc.bias.detach().numpy(),
-        hidden_size=HIDDEN_SIZE,
-        classes=np.array(labels_sorted),
-    )
+def proxy_negatives():
+    """Static poses and interpolated transitions, never labels for real gestures."""
+    with open(config.DATASET_CSV_PATH, encoding='utf-8') as stream:
+        rows = list(csv.DictReader(stream))
+    rng = np.random.default_rng(SEED)
+    features = np.asarray([[float(row[f'{axis}{i}']) for i in range(21) for axis in 'xyz']
+                           for row in rows], dtype=np.float32)
+    alpha = np.linspace(0, 1, STEPS, dtype=np.float32)[:, None]
+    for first, last in rng.integers(0, len(features), size=(200, 2)):
+        yield features[first] * (1 - alpha) + features[last] * alpha
 
 
 def main():
-    print("Carregando dataset de gestos:")
-    X, y = load_dataset()
-    if len(X) == 0:
-        print(f"\nNenhuma amostra encontrada em {config.MOVEMENT_DATASET_DIR}.")
-        print("Rode primeiro: python collect_movement.py")
-        return
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--legacy', action='store_true', help='Usar sequências antigas sem trajetória')
+    parser.add_argument('--epochs', type=int, default=120)
+    parser.add_argument('--report', type=Path)
+    args = parser.parse_args()
+    torch.manual_seed(SEED)
+    torch.set_num_threads(2)
+    features = 63 if args.legacy else 65
+    directory = Path(config.MOVEMENT_DATASET_DIR if args.legacy else config.MOVEMENT_TRAJECTORY_DIR)
+    data = load_samples(directory, features)
+    if args.legacy and REJECT not in data:
+        data[REJECT] = list(proxy_negatives())
+    missing = [label for label in [*config.MOVEMENT_LETTERS, REJECT] if len(data.get(label, [])) < 10]
+    if not args.legacy and missing:
+        parser.error(f'Colete pelo menos 10 amostras por classe, incluindo negativos: {missing}')
+    if REJECT not in data or len(data) < 3 or any(len(samples) < 10 for samples in data.values()):
+        parser.error('São necessários pelo menos 10 exemplos por classe, duas letras e negativos.')
 
-    print(f"\nTotal: {len(X)} amostras, {len(set(y))} classes, janela de {X.shape[1]} frames.")
-    counts = {label: int((y == label).sum()) for label in sorted(set(y))}
-    for label, n in counts.items():
-        marker = "  <- poucas amostras, colete mais" if n < 25 else ""
-        print(f"  {label}: {n}{marker}")
-
-    if len(X) < 40:
-        print("\nAVISO: dataset pequeno pra uma LSTM. Recomendado pelo menos "
-              "~25-40 amostras por letra (gestos, não frames) antes de confiar no resultado.")
-
-    labels_sorted = sorted(set(y.tolist()))
-    label_to_idx = {label: i for i, label in enumerate(labels_sorted)}
-    y_idx = np.array([label_to_idx[label] for label in y])
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y_idx, test_size=0.2, random_state=42, stratify=y_idx
-    )
-
-    X_train_t = torch.from_numpy(X_train)
-    y_train_t = torch.from_numpy(y_train).long()
-    X_test_t = torch.from_numpy(X_test)
-    y_test_t = torch.from_numpy(y_test).long()
-
-    model = LSTMClassifier(input_size=X.shape[2], hidden_size=HIDDEN_SIZE, num_classes=len(labels_sorted))
-    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    criterion = nn.CrossEntropyLoss()
-
-    model.train()
-    for epoch in range(EPOCHS):
-        optimizer.zero_grad()
-        logits = model(X_train_t)
-        loss = criterion(logits, y_train_t)
-        loss.backward()
-        optimizer.step()
-        if (epoch + 1) % 30 == 0:
-            print(f"  época {epoch + 1}/{EPOCHS} - loss: {loss.item():.4f}")
-
+    labels = sorted(data)
+    train, train_y, test, test_y = [], [], [], []
+    for index, label in enumerate(labels):
+        samples = data[label]
+        cut = int(len(samples) * 0.8)
+        train.extend(samples[:cut]); train_y.extend([index] * cut)
+        test.extend(samples[cut:]); test_y.extend([index] * (len(samples) - cut))
+    model = LSTMClassifier(features, len(labels))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.006)
+    counts = np.bincount(train_y)
+    criterion = nn.CrossEntropyLoss(weight=torch.tensor(len(train_y) / (len(labels) * counts), dtype=torch.float32))
+    x, y = torch.from_numpy(np.array(train)), torch.tensor(train_y)
+    for _ in range(args.epochs):
+        for indices in torch.randperm(len(y)).split(64):
+            optimizer.zero_grad()
+            loss = criterion(model(x[indices]), y[indices])
+            loss.backward()
+            optimizer.step()
     model.eval()
     with torch.no_grad():
-        y_pred = model(X_test_t).argmax(dim=1).numpy()
-
-    print("\n=== Relatório de avaliação (conjunto de teste, 20% separado) ===")
-    print(classification_report(y_test, y_pred, target_names=labels_sorted, zero_division=0))
-    print("=== Matriz de confusão ===")
-    print("Ordem:", labels_sorted)
-    print(confusion_matrix(y_test, y_pred))
-
-    # Retreina no dataset inteiro pro modelo final
-    X_all_t = torch.from_numpy(X)
-    y_all_t = torch.from_numpy(y_idx).long()
-    model_final = LSTMClassifier(input_size=X.shape[2], hidden_size=HIDDEN_SIZE, num_classes=len(labels_sorted))
-    optimizer = torch.optim.Adam(model_final.parameters(), lr=LEARNING_RATE)
-    model_final.train()
-    for epoch in range(EPOCHS):
-        optimizer.zero_grad()
-        loss = criterion(model_final(X_all_t), y_all_t)
-        loss.backward()
-        optimizer.step()
-
-    export_weights(model_final, labels_sorted, config.MOVEMENT_MODEL_PATH)
-    print(f"\nModelo salvo em {config.MOVEMENT_MODEL_PATH}")
+        prediction = model(torch.from_numpy(np.array(test))).argmax(dim=1).numpy()
+    print(classification_report(test_y, prediction, target_names=labels, zero_division=0))
+    report = {'features': features, 'classes': labels, 'counts': {label: len(samples) for label, samples in data.items()},
+              'test': classification_report(test_y, prediction, target_names=labels, output_dict=True, zero_division=0),
+              'split': 'last 20% of each class, sorted by filename', 'proxy_negatives': args.legacy}
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(json.dumps(report, indent=2), encoding='utf-8')
+    path = Path(config.MOVEMENT_MODEL_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(path, W_ih=model.lstm.weight_ih_l0.detach().numpy(), W_hh=model.lstm.weight_hh_l0.detach().numpy(),
+             b_ih=model.lstm.bias_ih_l0.detach().numpy(), b_hh=model.lstm.bias_hh_l0.detach().numpy(),
+             W_fc=model.fc.weight.detach().numpy(), b_fc=model.fc.bias.detach().numpy(),
+             hidden_size=32, classes=np.array(labels), feature_count=features, steps=STEPS)
+    print(f'Modelo salvo em {path}. Classes: {labels}')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

@@ -43,3 +43,14 @@ Sequência A → L → pausa → L confirma exatamente essas três letras. Segur
 L por mais que o intervalo de repetição não gera outra fala. Se A ainda está
 pendente quando L é confirmada, a fila entrega somente L. Verificado em Python
 com relógio controlado e em Rust no teste de estabilização.
+
+## LSTM experimental — 2026-11-07
+
+- Treinamento legado H (177), J (263) e rejeição aproximada (200). O conjunto
+  separado por ordem dos arquivos teve 129/129 previsões corretas, incluindo
+  40 negativos gerados de poses estáticas. Sem separação por pessoa/sessão.
+- Paridade Python/Rust em 80 sequências (60 locais, 20 sintéticas): mesmas
+  classes em 80/80, erro máximo de probabilidade 0,000000235.
+- Segmentação testada com translação do pulso, perda de mão e limite de 2 s.
+- K, X e Z não foram treinadas. A precisão do movimento ao vivo ainda requer
+  avaliação em sessões independentes e com exemplos negativos reais.

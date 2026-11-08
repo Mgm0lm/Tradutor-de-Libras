@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod model;
+mod movement;
 mod vision;
 use eframe::egui;
 use image::RgbImage;
@@ -63,6 +64,8 @@ struct Shared {
     detection: Option<Detection>,
     error: Option<String>,
     camera_fps: f32,
+    gesture: Option<String>,
+    movement_status: Option<String>,
 }
 struct Control {
     stop: AtomicBool,
@@ -70,7 +73,12 @@ struct Control {
     threshold: AtomicU32,
 }
 
-fn start_workers(base: PathBuf, shared: Arc<Mutex<Shared>>, control: Arc<Control>) {
+fn start_workers(
+    base: PathBuf,
+    shared: Arc<Mutex<Shared>>,
+    control: Arc<Control>,
+    movement_enabled: bool,
+) {
     let capture_shared = shared.clone();
     let capture_control = control.clone();
     std::thread::spawn(move || {
@@ -97,6 +105,7 @@ fn start_workers(base: PathBuf, shared: Arc<Mutex<Shared>>, control: Arc<Control
                         s.error = None;
                         s.frame = None;
                         s.detection = None;
+                        s.gesture = None;
                     }
                     Err(e) => {
                         capture_shared.lock().unwrap().error =
@@ -142,6 +151,32 @@ fn start_workers(base: PathBuf, shared: Arc<Mutex<Shared>>, control: Arc<Control
             ort::init_from(base.join("onnxruntime.dll"))?.commit();
             let mut hands = vision::Hands::load(&base)?;
             let mlp = Mlp::load(&base.join("modelo/landmark_model.json"))?;
+            let movement_model = if movement_enabled {
+                match movement::Lstm::load(&base.join("modelo/movement_model.json")) {
+                    Ok(model) => {
+                        let labels = model
+                            .classes
+                            .iter()
+                            .filter(|l| l.as_str() != "_")
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        shared.lock().unwrap().movement_status =
+                            Some(format!("Movimento experimental: {labels}"));
+                        Some(model)
+                    }
+                    Err(error) => {
+                        shared.lock().unwrap().movement_status =
+                            Some(format!("Movimento indisponível: {error}"));
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let mut segmenter = movement::Segmenter::default();
+            let mut generation = None;
+            let clock = Instant::now();
             let mut last_id = 0;
             while !control.stop.load(Ordering::Relaxed) {
                 let frame = shared.lock().unwrap().frame.clone();
@@ -154,7 +189,42 @@ fn start_workers(base: PathBuf, shared: Arc<Mutex<Shared>>, control: Arc<Control
                 let points = hands.detect(&frame.image)?;
                 let mut letter = None;
                 let mut confidence = 0.0;
-                if let Some(p) = &points {
+                let mut gesture = None;
+                let mut moving = false;
+                if let Some(model) = &movement_model {
+                    if generation != Some(frame.generation) {
+                        generation = Some(frame.generation);
+                        segmenter = movement::Segmenter::default();
+                    }
+                    let (segment, active) = segmenter.update(
+                        points.as_ref(),
+                        frame
+                            .captured
+                            .saturating_duration_since(clock)
+                            .as_secs_f64(),
+                    );
+                    moving = active || segment.is_some();
+                    if let Some(segment) = segment {
+                        let probabilities = model
+                            .predict(&movement::sequence_features(&segment, model.feature_count));
+                        let (index, probability) = probabilities
+                            .iter()
+                            .enumerate()
+                            .max_by(|a, b| a.1.total_cmp(b.1))
+                            .unwrap();
+                        let label = &model.classes[index];
+                        let threshold =
+                            f32::from_bits(control.threshold.load(Ordering::Relaxed)).max(0.70);
+                        if *probability >= threshold
+                            && matches!(label.as_str(), "H" | "J" | "K" | "X" | "Z")
+                        {
+                            gesture = Some(label.clone());
+                        }
+                    }
+                }
+                if let Some(p) = &points
+                    && !moving
+                {
                     let probs = mlp.predict(&model::normalize(p));
                     let (best, conf) = probs
                         .iter()
@@ -168,7 +238,11 @@ fn start_workers(base: PathBuf, shared: Arc<Mutex<Shared>>, control: Arc<Control
                 }
                 let fps = 1.0 / start.elapsed().as_secs_f32();
                 if frame.generation == control.camera.load(Ordering::Relaxed) {
-                    shared.lock().unwrap().detection = Some(Detection {
+                    let mut state = shared.lock().unwrap();
+                    if gesture.is_some() {
+                        state.gesture = gesture;
+                    }
+                    state.detection = Some(Detection {
                         frame,
                         points,
                         letter,
@@ -239,6 +313,7 @@ struct App {
     letter: Option<String>,
     confirmed_letter: Option<String>,
     progress: f32,
+    movement_visible_until: f64,
     threshold: f32,
     desync: bool,
     tts: bool,
@@ -249,7 +324,7 @@ struct App {
     audio_error: Arc<Mutex<Option<String>>>,
 }
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>, base: PathBuf) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, base: PathBuf, movement_enabled: bool) -> Self {
         cc.egui_ctx.set_visuals(egui::Visuals::light());
         let shared = Arc::new(Mutex::new(Shared::default()));
         let control = Arc::new(Control {
@@ -285,7 +360,7 @@ impl App {
                 }
             }
         });
-        start_workers(base, shared.clone(), control.clone());
+        start_workers(base, shared.clone(), control.clone(), movement_enabled);
         Self {
             shared,
             control,
@@ -297,6 +372,7 @@ impl App {
             letter: None,
             confirmed_letter: None,
             progress: 0.0,
+            movement_visible_until: 0.0,
             threshold: 0.7,
             desync: true,
             tts: true,
@@ -326,39 +402,54 @@ impl eframe::App for App {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        let (camera, detection, error, cam_fps) = {
-            let s = self.shared.lock().unwrap();
+        let (camera, detection, error, cam_fps, gesture, movement_status) = {
+            let mut s = self.shared.lock().unwrap();
             (
                 s.frame.clone(),
                 s.detection.clone(),
                 s.error.clone(),
                 s.camera_fps,
+                s.gesture.take(),
+                s.movement_status.clone(),
             )
         };
         let detection = detection.filter(|d| {
             d.frame.generation == self.selected
                 && d.frame.captured.elapsed() < Duration::from_secs(1)
         });
-        if let Some(d) = &detection {
-            if d.frame.id != self.last_detection {
-                self.last_detection = d.frame.id;
-                let (l, p, confirmed) = self
-                    .stabilizer
-                    .update(d.letter.clone(), self.start.elapsed().as_secs_f64());
-                self.letter = l;
-                self.progress = p;
-                if confirmed {
-                    self.confirmed_letter = self.letter.clone();
-                    if let Some(letter) = self.letter.as_deref() {
-                        self.speak(letter);
+        let now = self.start.elapsed().as_secs_f64();
+        if let Some(letter) = gesture
+            && self.stabilizer.confirm(&letter, now)
+        {
+            self.stabilizer.update(None, now);
+            self.movement_visible_until = now + 0.65;
+            self.letter = Some(letter.clone());
+            self.confirmed_letter = Some(letter.clone());
+            self.progress = 1.0;
+            self.speak(&letter);
+        }
+        if now >= self.movement_visible_until {
+            if let Some(d) = &detection {
+                if d.frame.id != self.last_detection {
+                    self.last_detection = d.frame.id;
+                    let (l, p, confirmed) = self
+                        .stabilizer
+                        .update(d.letter.clone(), self.start.elapsed().as_secs_f64());
+                    self.letter = l;
+                    self.progress = p;
+                    if confirmed {
+                        self.confirmed_letter = self.letter.clone();
+                        if let Some(letter) = self.letter.as_deref() {
+                            self.speak(letter);
+                        }
                     }
                 }
+            } else {
+                self.stabilizer
+                    .update(None, self.start.elapsed().as_secs_f64());
+                self.letter = None;
+                self.progress = 0.0;
             }
-        } else {
-            self.stabilizer
-                .update(None, self.start.elapsed().as_secs_f64());
-            self.letter = None;
-            self.progress = 0.0;
         }
         let displayed = if self.desync {
             camera.as_ref()
@@ -466,6 +557,7 @@ impl eframe::App for App {
                                             self.stabilizer = Stabilizer::default();
                                             self.letter = None;
                                             self.progress = 0.0;
+                                            self.movement_visible_until = 0.0;
                                         }
                                         ui.checkbox(&mut self.desync, "Dessincronizar câmera / IA");
                                         ui.label("Confiança mín.:");
@@ -565,6 +657,9 @@ impl eframe::App for App {
                                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 }
                             });
+                            if let Some(status) = &movement_status {
+                                ui.small(status);
+                            }
                             if let Some(e) = self.audio_error.lock().unwrap().as_ref() {
                                 ui.colored_label(egui::Color32::RED, e);
                             }
@@ -625,6 +720,26 @@ fn run() -> Result<()> {
         )?;
         return Ok(());
     }
+    if let Some(i) = args.iter().position(|s| s == "--predict-movement") {
+        let model = movement::Lstm::load(&base.join("modelo/movement_model.json"))?;
+        let input: Vec<Vec<Vec<f32>>> =
+            serde_json::from_slice(&std::fs::read(args.get(i + 1).ok_or("Entrada ausente")?)?)?;
+        if input
+            .iter()
+            .any(|s| s.len() != 20 || s.iter().any(|row| row.len() != model.feature_count))
+        {
+            return Err("Dimensões de sequência inválidas".into());
+        }
+        let output: Vec<_> = input
+            .iter()
+            .map(|sequence| model.predict(sequence))
+            .collect();
+        std::fs::write(
+            args.get(i + 2).ok_or("Saída ausente")?,
+            serde_json::to_vec(&output)?,
+        )?;
+        return Ok(());
+    }
     if let Some(i) = args.iter().position(|s| s == "--image") {
         ort::init_from(base.join("onnxruntime.dll"))?.commit();
         let mut hands = vision::Hands::load(&base)?;
@@ -646,7 +761,13 @@ fn run() -> Result<()> {
     eframe::run_native(
         "Tradutor de LIBRAS - Alfabeto",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, base)))),
+        Box::new(move |cc| {
+            Ok(Box::new(App::new(
+                cc,
+                base,
+                args.iter().any(|arg| arg == "--movement"),
+            )))
+        }),
     )
     .map_err(|e| e.to_string())?;
     Ok(())

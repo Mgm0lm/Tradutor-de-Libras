@@ -30,10 +30,15 @@ def main():
     else:
         source = ROOT / "dist/python-build/TradutorLibra"
         shutil.copytree(source, bundle, dirs_exist_ok=True)
+        (bundle / "TradutorLibra.exe").rename(bundle / "TradutorLibras.exe")
         shutil.copy2(ROOT / "modelo/landmark_model.npz", bundle / "modelo")
         if (ROOT / "modelo/movement_model.npz").exists():
             shutil.copy2(ROOT / "modelo/movement_model.npz", bundle / "modelo")
     shutil.copytree(ROOT / "tts_cache", bundle / "tts_cache")
+    if any((bundle / "modelo").glob("movement_model.*")):
+        (bundle / "Iniciar-com-movimento.cmd").write_text(
+            '@echo off\nstart "" "%~dp0TradutorLibras.exe" --movement\n', encoding="ascii"
+        )
     for filename in ["README.md", "CHANGELOG.md"]:
         shutil.copy2(ROOT / filename, bundle)
     records = {p.relative_to(bundle).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
