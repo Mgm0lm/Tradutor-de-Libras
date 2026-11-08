@@ -15,4 +15,7 @@ config_override.json
 .env
 .env.*
 tools/downloads/
+modelo/Old/
+*.dll
+test-output/
 

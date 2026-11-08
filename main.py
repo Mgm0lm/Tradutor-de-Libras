@@ -9,6 +9,7 @@ formato Keras 2 / .h5).
 import logging
 import platform
 import sys
+import time
 
 # --------------------------------------------------------------
 # FIX DE DPI NO WINDOWS - precisa rodar ANTES de criar a QApplication,
@@ -117,6 +118,7 @@ class MainWindow(QMainWindow):
         self.camera_worker = None
         self.classifier_worker = None
         self.stabilizer = LetterStabilizer()
+        self._movement_visible_until = 0.0
         self.tts_worker = None
 
         self._last_camera_frame_id = -1
@@ -341,11 +343,16 @@ class MainWindow(QMainWindow):
             # parado" de novo como as estáticas. Confirma direto,
             # respeitando o mesmo cooldown do estabilizador pra não
             # falar a mesma letra em sequência por engano.
-            self.stabilizer.reset()
-            self._update_letter_ui(detection.letter, 1.0, confirmed=True)
-            if self.tts_worker is not None:
-                self.tts_worker.enqueue(detection.letter)
-            self._last_confirmed_letter = detection.letter
+            now = time.monotonic()
+            if self.stabilizer.confirm(detection.letter, now):
+                self.stabilizer.reset()
+                self._movement_visible_until = now + 0.65
+                self._update_letter_ui(detection.letter, 1.0, confirmed=True)
+                if self.tts_worker is not None:
+                    self.tts_worker.enqueue(detection.letter)
+            return
+
+        if time.monotonic() < self._movement_visible_until:
             return
 
         letter = detection.letter if detection is not None else None
@@ -383,13 +390,22 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _start_tts(self):
         self._last_confirmed_letter = None
-        self.tts_worker = TTSWorker(letters=list(config.LETTERS.values()))
+        letters = list(config.LETTERS.values())
+        if config.ENABLE_MOVEMENT:
+            try:
+                with np.load(config.MOVEMENT_MODEL_PATH, allow_pickle=False) as data:
+                    letters.extend(str(letter) for letter in data["classes"] if letter in config.MOVEMENT_LETTERS)
+            except (OSError, ValueError, KeyError):
+                logger.warning("Modelo de movimento indisponível para preparar áudio.")
+        self.tts_worker = TTSWorker(letters=letters)
         self.tts_worker.cache_ready.connect(lambda: logger.info("Cache de TTS pronto."))
         self.tts_worker.speak_error.connect(lambda msg: logger.warning("TTS: %s", msg))
         self.tts_worker.start()
 
     def _on_tts_toggled(self, state):
         config.ENABLE_TTS = bool(state)
+        if not config.ENABLE_TTS and self.tts_worker is not None:
+            self.tts_worker.clear_pending()
 
     def _repeat_last_letter(self):
         if self._last_confirmed_letter and self.tts_worker is not None:
@@ -464,6 +480,9 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    if "--movement" in sys.argv:
+        sys.argv.remove("--movement")
+        config.ENABLE_MOVEMENT = True
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()

@@ -10,7 +10,6 @@ velocidade que o hardware permitir.
 
 import logging
 import time
-from collections import deque
 from threading import Lock
 
 import cv2
@@ -19,7 +18,8 @@ import mediapipe as mp
 from PySide6.QtCore import QThread, Signal
 
 import config
-from landmarks_utils import mediapipe_landmarks_to_xyz, normalize_landmarks, resample_sequence
+from landmarks_utils import mediapipe_landmarks_to_xyz, normalize_landmarks
+from movement import MotionSegmenter, STEPS, sequence_features
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,9 @@ class LSTMNumpy:
         self.W_fc = data["W_fc"]  # (num_classes, H)
         self.b_fc = data["b_fc"]  # (num_classes,)
         self.hidden_size = int(data["hidden_size"])
+        self.feature_count = int(data.get("feature_count", self.W_ih.shape[1]))
+        if self.feature_count not in (63, 65) or int(data.get("steps", STEPS)) != STEPS:
+            raise ValueError("Formato de sequência incompatível")
         self.classes = [str(c) for c in data["classes"]]
 
     @staticmethod
@@ -141,8 +144,7 @@ class LibrasClassifierWorker(QThread):
         # (opcional - se o modelo não existir, o app funciona só com
         # as letras estáticas, sem erro).
         self._movement_model = None
-        self._motion_buffer = deque(maxlen=config.MOTION_DETECT_FRAMES)
-        self._gesture_window = deque()  # lista de (timestamp, feature) - poda por tempo, não por contagem
+        self._segmenter = MotionSegmenter()
 
     def set_conf_threshold(self, value):
         with self._conf_lock:
@@ -158,7 +160,8 @@ class LibrasClassifierWorker(QThread):
         if not self._load_model():
             return
 
-        self._load_movement_model()  # opcional - não falha o app se ausente
+        if config.ENABLE_MOVEMENT:
+            self._load_movement_model()
 
         try:
             self._hands = mp.solutions.hands.Hands(
@@ -218,65 +221,20 @@ class LibrasClassifierWorker(QThread):
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         rgb.flags.writeable = False
         results = self._hands.process(rgb)
-        now = time.time()
-
+        now = time.monotonic()
         if not results.multi_hand_landmarks:
-            # Sem mão na cena - reseta os buffers de gesto (um gesto
-            # precisa de mão contínua; se sumiu, o que tiver no buffer
-            # não é mais um gesto válido).
-            self._motion_buffer.clear()
-            self._gesture_window.clear()
+            self._segmenter.reset()
             return None, None
 
-        hand_landmarks = results.multi_hand_landmarks[0]
-        xyz = mediapipe_landmarks_to_xyz(hand_landmarks)
-        landmarks_px = [(int(x * w), int(y * h)) for (x, y, _z) in xyz]
-        feature = normalize_landmarks(xyz)
-
-        self._motion_buffer.append(feature)
-        is_moving = self._is_moving()
-        was_gesturing = len(self._gesture_window) > 0
-
-        if is_moving and self._movement_model is not None:
-            self._gesture_window.append((now, feature))
-            # poda por TEMPO real, não por contagem de frames - assim a
-            # duração da janela não depende da velocidade da câmera/máquina
-            while self._gesture_window and (now - self._gesture_window[0][0]) > config.MOVEMENT_WINDOW_SECONDS:
-                self._gesture_window.popleft()
-
-            span = now - self._gesture_window[0][0] if len(self._gesture_window) >= 2 else 0.0
-            if span >= config.MOVEMENT_WINDOW_SECONDS:
-                # teto de segurança: gesto não parou sozinho até aqui -
-                # classifica com o que já foi capturado e reinicia
-                detection = self._classify_gesture()
-                self._gesture_window.clear()
-                return detection, landmarks_px
-            # ainda gesticulando - não roda a MLP estática nesse
-            # meio-tempo pra não piscar letra estática errada
-            return None, landmarks_px
-
-        if was_gesturing:
-            # a mão ACABOU de parar - esse é o momento natural de
-            # classificar o gesto que acabou de terminar (em vez de
-            # esperar um número fixo de frames)
-            span = self._gesture_window[-1][0] - self._gesture_window[0][0] if len(self._gesture_window) >= 2 else 0.0
-            detection = self._classify_gesture() if span >= config.MOVEMENT_MIN_SECONDS else None
-            self._gesture_window.clear()
-            return detection, landmarks_px
-
-        # Mão parada e sem gesto pendente (ou modelo de movimento
-        # indisponível): comportamento normal, MLP estática frame a frame.
-        detection = self._classify_static(feature)
-        return detection, landmarks_px
-
-    def _is_moving(self):
-        if len(self._motion_buffer) < 2:
-            return False
-        diffs = [
-            np.linalg.norm(self._motion_buffer[i] - self._motion_buffer[i - 1])
-            for i in range(1, len(self._motion_buffer))
-        ]
-        return float(np.mean(diffs)) > config.MOTION_THRESHOLD
+        xyz = mediapipe_landmarks_to_xyz(results.multi_hand_landmarks[0])
+        landmarks_px = [(int(x * w), int(y * h)) for x, y, _z in xyz]
+        if self._movement_model is not None:
+            segment, active = self._segmenter.update(xyz, now)
+            if segment is not None:
+                return self._classify_gesture(segment), landmarks_px
+            if active:
+                return None, landmarks_px
+        return self._classify_static(normalize_landmarks(xyz)), landmarks_px
 
     def _classify_static(self, feature):
         probs = self._model.predict_proba(feature.reshape(1, -1))[0]
@@ -288,14 +246,13 @@ class LibrasClassifierWorker(QThread):
             return None
         return Detection(letter, conf, instant=False)
 
-    def _classify_gesture(self):
-        raw_sequence = np.array([f for _t, f in self._gesture_window], dtype=np.float32)
-        sequence = resample_sequence(raw_sequence, config.MOVEMENT_STEPS)
+    def _classify_gesture(self, segment):
+        sequence = sequence_features(segment, self._movement_model.feature_count)
         probs = self._movement_model.predict_proba(sequence)
         best_idx = int(np.argmax(probs))
         conf = float(probs[best_idx])
         letter = self._movement_model.classes[best_idx]
-        if conf < config.MOVEMENT_CONF_THRESHOLD:
+        if letter not in config.MOVEMENT_LETTERS or conf < max(config.MOVEMENT_CONF_THRESHOLD, self._get_conf_threshold()):
             return None
         return Detection(letter, conf, instant=True)
 
