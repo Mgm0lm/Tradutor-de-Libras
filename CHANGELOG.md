@@ -2,6 +2,13 @@
 
 As mudanças são registradas por versão. Datas no formato AAAA-MM-DD.
 
+## 0.2.1 — 2026-11-07
+
+- Uma posição mantida gera uma única fala. É possível repetir a letra depois
+  de interromper o gesto ou usar o botão Repetir.
+- A fala mais recente substitui a anterior quando ainda está pendente.
+- Desativar a voz limpa a fala pendente.
+
 ## 0.2.0 — 2026-11-07
 
 - Aplicativo Windows nativo em Rust no branch `Rust`, sem processo Python.

@@ -36,3 +36,10 @@ ao vivo após testar câmera, modelos, interface e áudio no executável distrib
 Scripts reproduzíveis: `tools/verify_native.py`, `tools/verify_vision.py`,
 `cargo test --manifest-path rust/Cargo.toml --release --locked`.
 Os resultados detalhados ficam em `test-output/`, que não é enviado ao GitHub.
+
+## Regressão de áudio — 2026-11-07
+
+Sequência A → L → pausa → L confirma exatamente essas três letras. Segurar A ou
+L por mais que o intervalo de repetição não gera outra fala. Se A ainda está
+pendente quando L é confirmada, a fila entrega somente L. Verificado em Python
+com relógio controlado e em Rust no teste de estabilização.

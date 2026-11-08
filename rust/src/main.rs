@@ -244,7 +244,8 @@ struct App {
     tts: bool,
     selected: u32,
     cameras: Vec<(u32, String)>,
-    audio: mpsc::SyncSender<String>,
+    audio: mpsc::SyncSender<()>,
+    pending_audio: Arc<Mutex<Option<String>>>,
     audio_error: Arc<Mutex<Option<String>>>,
 }
 impl App {
@@ -268,12 +269,16 @@ impl App {
         };
         let selected = cameras[0].0;
         control.camera.store(selected, Ordering::Relaxed);
-        let (audio, rx) = mpsc::sync_channel::<String>(1);
+        let (audio, rx) = mpsc::sync_channel(1);
+        let pending_audio = Arc::new(Mutex::new(None::<String>));
+        let pending = pending_audio.clone();
         let audio_error = Arc::new(Mutex::new(None));
         let errors = audio_error.clone();
         let audio_base = base.clone();
         std::thread::spawn(move || {
-            while let Ok(letter) = rx.recv() {
+            while rx.recv().is_ok() {
+                let letter = pending.lock().unwrap().take();
+                let Some(letter) = letter else { continue };
                 let path = audio_base.join("tts_cache").join(format!("{letter}.mp3"));
                 if let Err(e) = play_audio(&path) {
                     *errors.lock().unwrap() = Some(e.to_string());
@@ -298,7 +303,15 @@ impl App {
             selected,
             cameras,
             audio,
+            pending_audio,
             audio_error,
+        }
+    }
+
+    fn speak(&self, letter: &str) {
+        if self.tts {
+            *self.pending_audio.lock().unwrap() = Some(letter.to_owned());
+            let _ = self.audio.try_send(());
         }
     }
 }
@@ -336,8 +349,8 @@ impl eframe::App for App {
                 self.progress = p;
                 if confirmed {
                     self.confirmed_letter = self.letter.clone();
-                    if self.tts {
-                        let _ = self.audio.try_send(self.letter.clone().unwrap());
+                    if let Some(letter) = self.letter.as_deref() {
+                        self.speak(letter);
                     }
                 }
             }
@@ -536,10 +549,16 @@ impl eframe::App for App {
                                 });
                             ui.add_space(16.0);
                             ui.horizontal_wrapped(|ui| {
-                                ui.checkbox(&mut self.tts, "Falar em voz alta (TTS)");
+                                if ui
+                                    .checkbox(&mut self.tts, "Falar em voz alta (TTS)")
+                                    .changed()
+                                    && !self.tts
+                                {
+                                    self.pending_audio.lock().unwrap().take();
+                                }
                                 if ui.button("Repetir").clicked() && self.tts {
                                     if let Some(l) = &self.confirmed_letter {
-                                        let _ = self.audio.try_send(l.clone());
+                                        self.speak(l);
                                     }
                                 }
                                 if ui.button("Sair (ESC)").clicked() {

@@ -20,7 +20,6 @@ import logging
 import os
 import queue
 import time
-from threading import Thread
 
 from PySide6.QtCore import QThread, Signal
 
@@ -37,7 +36,7 @@ class TTSWorker(QThread):
     def __init__(self, letters, parent=None):
         super().__init__(parent)
         self.letters = letters  # lista de letras unicas (config.LETTERS.values())
-        self._queue = queue.Queue()
+        self._queue = queue.Queue(maxsize=1)
         self._running = False
         self._mixer_ready = False
 
@@ -46,7 +45,14 @@ class TTSWorker(QThread):
         confirmada. Não bloqueia."""
         if not config.ENABLE_TTS:
             return
-        self._queue.put(letter)
+        self.clear_pending()
+        self._queue.put_nowait(letter)
+
+    def clear_pending(self):
+        try:
+            self._queue.get_nowait()
+        except queue.Empty:
+            pass
 
     def run(self):
         self._running = True
@@ -60,7 +66,8 @@ class TTSWorker(QThread):
                 letter = self._queue.get(timeout=0.2)
             except queue.Empty:
                 continue
-            self._play(letter)
+            if config.ENABLE_TTS:
+                self._play(letter)
 
     def _cache_path(self, letter):
         return os.path.join(config.TTS_CACHE_DIR, f"{letter}.mp3")

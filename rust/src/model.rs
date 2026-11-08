@@ -94,6 +94,7 @@ impl Mlp {
 pub struct Stabilizer {
     current: Option<String>,
     since: f64,
+    confirmed_current: bool,
     last: Option<String>,
     last_at: f64,
 }
@@ -102,14 +103,17 @@ impl Stabilizer {
         if letter != self.current {
             self.current = letter.clone();
             self.since = now;
+            self.confirmed_current = false;
         }
         let Some(ref l) = letter else {
             return (None, 0.0, false);
         };
         let progress = ((now - self.since) / 0.8).clamp(0.0, 1.0) as f32;
-        let confirmed =
-            progress >= 1.0 && (self.last.as_ref() != Some(l) || now - self.last_at >= 1.8);
+        let confirmed = progress >= 1.0
+            && !self.confirmed_current
+            && (self.last.as_ref() != Some(l) || now - self.last_at >= 1.8);
         if confirmed {
+            self.confirmed_current = true;
             self.last = letter.clone();
             self.last_at = now;
         }
@@ -134,7 +138,12 @@ mod tests {
         assert!(!s.update(Some("A".into()), 10.0).2);
         assert!(s.update(Some("A".into()), 10.81).2);
         assert!(!s.update(Some("A".into()), 11.0).2);
-        assert!(s.update(Some("A".into()), 12.7).2);
-        assert_eq!(s.update(None, 13.0).1, 0.0);
+        assert!(!s.update(Some("A".into()), 12.7).2);
+        assert!(!s.update(Some("L".into()), 13.0).2);
+        assert!(s.update(Some("L".into()), 13.81).2);
+        assert!(!s.update(Some("L".into()), 20.0).2);
+        assert_eq!(s.update(None, 21.0).1, 0.0);
+        assert!(!s.update(Some("L".into()), 22.0).2);
+        assert!(s.update(Some("L".into()), 22.81).2);
     }
 }

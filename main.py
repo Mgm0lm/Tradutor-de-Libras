@@ -390,6 +390,8 @@ class MainWindow(QMainWindow):
 
     def _on_tts_toggled(self, state):
         config.ENABLE_TTS = bool(state)
+        if not config.ENABLE_TTS and self.tts_worker is not None:
+            self.tts_worker.clear_pending()
 
     def _repeat_last_letter(self):
         if self._last_confirmed_letter and self.tts_worker is not None:

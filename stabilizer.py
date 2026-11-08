@@ -17,6 +17,7 @@ class LetterStabilizer:
         self._since = None
         self._last_confirmed_letter = None
         self._last_confirmed_at = 0.0
+        self._confirmed_current = False
 
     def update(self, letter):
         """Recebe a letra do frame atual (ou None se nada detectado
@@ -28,11 +29,12 @@ class LetterStabilizer:
         - just_confirmed: True só no frame em que ela acabou de virar
           "confirmada" (é a hora de chamar o TTS)
         """
-        now = time.time()
+        now = time.monotonic()
 
         if letter != self._current_letter:
             self._current_letter = letter
             self._since = now
+            self._confirmed_current = False
 
         if letter is None or self._since is None:
             return None, 0.0, False
@@ -41,7 +43,7 @@ class LetterStabilizer:
         progress = min(1.0, held_for / config.MIN_STABLE_SECONDS)
 
         just_confirmed = False
-        if held_for >= config.MIN_STABLE_SECONDS:
+        if held_for >= config.MIN_STABLE_SECONDS and not self._confirmed_current:
             cooldown_ok = (
                 letter != self._last_confirmed_letter
                 or (now - self._last_confirmed_at) >= config.COOLDOWN_SECONDS
@@ -49,6 +51,7 @@ class LetterStabilizer:
             if cooldown_ok:
                 self._last_confirmed_letter = letter
                 self._last_confirmed_at = now
+                self._confirmed_current = True
                 just_confirmed = True
 
         return letter, progress, just_confirmed
@@ -56,3 +59,4 @@ class LetterStabilizer:
     def reset(self):
         self._current_letter = None
         self._since = None
+        self._confirmed_current = False
