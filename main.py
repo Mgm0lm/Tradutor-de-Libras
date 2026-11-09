@@ -426,7 +426,7 @@ class MainWindow(QMainWindow):
         if self.tts_worker is None or not config.ENABLE_TTS:
             return
         delay_ms = max(0, round(config.MOVEMENT_TTS_DELAY_SECONDS * 1000))
-        if letter in config.MOVEMENT_LETTERS and delay_ms:
+        if letter in config.MOVEMENT_LETTERS and letter != "J" and delay_ms:
             self.tts_worker.clear_pending()
             self._pending_tts_letter = letter
             self._tts_delay_timer.start(delay_ms)

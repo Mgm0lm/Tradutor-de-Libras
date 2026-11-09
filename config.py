@@ -124,7 +124,7 @@ MAX_CAMERAS_TO_SCAN = 5
 # ------------------------------------------------------------------
 ENABLE_TTS = True
 TTS_LANG = "pt"
-# Espera após a confirmação de H, J, K, X e Z, em segundos.
+# Espera após a confirmação de H, K, X e Z, em segundos. J fala sem espera extra.
 MOVEMENT_TTS_DELAY_SECONDS = 0.5
 TTS_CACHE_DIR = os.path.join(BASE_DIR, "tts_cache")
 
