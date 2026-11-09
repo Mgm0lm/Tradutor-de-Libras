@@ -12,7 +12,7 @@ pub struct SpeechSchedule(Option<(f64, String)>);
 
 impl SpeechSchedule {
     pub fn schedule(&mut self, letter: &str, now: f64, movement_delay: f64) {
-        let delay = if is_movement_letter(letter) {
+        let delay = if is_movement_letter(letter) && letter != "J" {
             movement_delay
         } else {
             0.0
@@ -211,7 +211,9 @@ mod tests {
         assert_eq!(speech.take_ready(0.49), None);
         assert_eq!(speech.take_ready(0.5).as_deref(), Some("H"));
         assert_eq!(speech.take_ready(0.6), None);
-        speech.schedule("J", 1.0, 0.5);
+        speech.schedule("J", 0.7, 0.5);
+        assert_eq!(speech.take_ready(0.7).as_deref(), Some("J"));
+        speech.schedule("X", 1.0, 0.5);
         speech.schedule("A", 1.2, 0.5);
         assert_eq!(speech.take_ready(1.2).as_deref(), Some("A"));
         assert_eq!(speech.take_ready(1.5), None);

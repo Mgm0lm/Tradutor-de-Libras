@@ -3,9 +3,33 @@ from pathlib import Path
 import argparse
 import hashlib
 import json
+import os
 import shutil
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def deploy_qt(bundle):
+    sdk = Path(os.environ.get("LIBRAS_QT_DIR", ROOT / "tools/downloads/qt-6.11.1"))
+    bin_dir = sdk / "bin"
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    subprocess.run([
+        str(bin_dir / "windeployqt.exe"), "--qtpaths", str(bin_dir / "qtpaths.exe"),
+        "--release", "--no-translations", "--no-system-d3d-compiler", "--no-opengl-sw",
+        "--no-compiler-runtime", "--add-plugin-types", "styles", str(bundle / "TradutorLibras.exe"),
+    ], check=True, env=env)
+    notices = bundle / "licencas-qt"
+    notices.mkdir()
+    for name in ("LGPL-3.0-only.txt", "GPL-3.0-only.txt"):
+        shutil.copy2(sdk / "licenses" / name, notices)
+    (notices / "Qt.txt").write_text(
+        "Qt Base 6.11.1 (bibliotecas dinâmicas, LGPL-3.0)\n"
+        "Código-fonte: https://github.com/qt/qtbase/tree/v6.11.1\n"
+        "Atribuições: https://doc.qt.io/qt-6/licenses-used-in-qt.html\n",
+        encoding="utf-8",
+    )
 
 def main():
     parser = argparse.ArgumentParser()
@@ -20,6 +44,12 @@ def main():
     (bundle / "modelo").mkdir()
     if args.kind == "rust":
         shutil.copy2(ROOT / "rust/target/release/tradutor-libras.exe", bundle / "TradutorLibras.exe")
+        deploy_qt(bundle)
+        (bundle / "config_override.example.json").write_text(json.dumps({
+            "MIN_STABLE_SECONDS": 0.8,
+            "MOVEMENT_MIN_STABLE_SECONDS": 0.1,
+            "MOVEMENT_TTS_DELAY_SECONDS": 0.5,
+        }, indent=2) + "\n", encoding="utf-8")
         shutil.copy2(ROOT / "tools/downloads/onnxruntime.dll", bundle)
         for filename in ["landmark_model.json", "palm_detection_mediapipe_2023feb.onnx", "handpose_estimation_mediapipe_2023feb.onnx", "rust-assets.json", "palm-LICENSE", "handpose-LICENSE"]:
             shutil.copy2(ROOT / "modelo" / filename, bundle / "modelo")

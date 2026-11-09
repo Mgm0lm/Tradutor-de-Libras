@@ -84,3 +84,13 @@ com relógio controlado e em Rust no teste de estabilização.
 - O Windows recebe pedidos de reprodução WAV assíncronos. Uma nova letra
   pode interromper o áudio anterior. A estabilização de 800 ms continua
   como padrão e pode ser ajustada na interface.
+
+## Interface compartilhada — 2026-11-09
+
+- Comparação fora da tela com Qt 6.11.1, a mesma imagem RGB e os mesmos
+  textos. Python e a janela nativa usada pelo Rust renderizaram 1.659 × 864
+  pixels, sem diferenças no estado sem letra e com J confirmada.
+- Python e Rust enviaram J para o áudio sem a espera configurada. H, K, X e Z
+  continuam usando a espera. Os testes verificaram a substituição de fala pendente.
+- A conversão da interface preservou as classes da MLP em 400/400 vetores
+  comparados entre Python e Rust.
