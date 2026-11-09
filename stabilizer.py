@@ -24,8 +24,7 @@ class LetterStabilizer:
         acima do threshold). Retorna uma tupla:
             (letter_to_show, progress_0_to_1, just_confirmed)
         - letter_to_show: a letra "candidata" atual (ou None)
-        - progress_0_to_1: quao perto de 1.5s estavel ela está (pra
-          barra de progresso na interface)
+        - progress_0_to_1: fração do tempo de estabilidade exigido para a letra
         - just_confirmed: True só no frame em que ela acabou de virar
           "confirmada" (é a hora de chamar o TTS)
         """
@@ -40,10 +39,12 @@ class LetterStabilizer:
             return None, 0.0, False
 
         held_for = now - self._since
-        progress = min(1.0, held_for / config.MIN_STABLE_SECONDS)
+        required = (config.MOVEMENT_MIN_STABLE_SECONDS if letter in config.MOVEMENT_LETTERS
+                    else config.MIN_STABLE_SECONDS)
+        progress = min(1.0, held_for / required) if required > 0 else 1.0
 
         just_confirmed = False
-        if held_for >= config.MIN_STABLE_SECONDS and not self._confirmed_current:
+        if held_for >= required and not self._confirmed_current:
             if self.confirm(letter, now):
                 self._confirmed_current = True
                 just_confirmed = True

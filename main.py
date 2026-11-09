@@ -120,6 +120,11 @@ class MainWindow(QMainWindow):
         self.stabilizer = LetterStabilizer()
         self._movement_visible_until = 0.0
         self.tts_worker = None
+        self._pending_tts_letter = None
+        self._tts_delay_timer = QTimer(self)
+        self._tts_delay_timer.setSingleShot(True)
+        self._tts_delay_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._tts_delay_timer.timeout.connect(self._play_delayed_letter)
 
         self._last_camera_frame_id = -1
         self._last_landmarks_px = None
@@ -348,8 +353,7 @@ class MainWindow(QMainWindow):
                 self.stabilizer.reset()
                 self._movement_visible_until = now + 0.65
                 self._update_letter_ui(detection.letter, 1.0, confirmed=True)
-                if self.tts_worker is not None:
-                    self.tts_worker.enqueue(detection.letter)
+                self._speak_confirmed(detection.letter)
             return
 
         if time.monotonic() < self._movement_visible_until:
@@ -360,8 +364,8 @@ class MainWindow(QMainWindow):
 
         self._update_letter_ui(shown_letter, progress, confirmed=(progress >= 1.0 and shown_letter is not None))
 
-        if just_confirmed and self.tts_worker is not None:
-            self.tts_worker.enqueue(shown_letter)
+        if just_confirmed:
+            self._speak_confirmed(shown_letter)
 
     def _update_letter_ui(self, letter, progress, confirmed):
         self.progress_bar.setValue(int(progress * 100))
@@ -390,14 +394,14 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _start_tts(self):
         self._last_confirmed_letter = None
-        letters = list(config.LETTERS.values())
-        if config.ENABLE_MOVEMENT:
+        letters = []
+        for path in filter(None, (config.MODEL_PATH, config.selected_movement_model_path())):
             try:
-                with np.load(config.MOVEMENT_MODEL_PATH, allow_pickle=False) as data:
-                    letters.extend(str(letter) for letter in data["classes"] if letter in config.MOVEMENT_LETTERS)
+                with np.load(path, allow_pickle=False) as data:
+                    letters.extend(str(letter) for letter in data["classes"] if letter in config.LETTERS.values())
             except (OSError, ValueError, KeyError):
-                logger.warning("Modelo de movimento indisponível para preparar áudio.")
-        self.tts_worker = TTSWorker(letters=letters)
+                logger.warning("Modelo indisponível para preparar áudio: %s", path)
+        self.tts_worker = TTSWorker(letters=list(dict.fromkeys(letters)))
         self.tts_worker.cache_ready.connect(lambda: logger.info("Cache de TTS pronto."))
         self.tts_worker.speak_error.connect(lambda msg: logger.warning("TTS: %s", msg))
         self.tts_worker.start()
@@ -405,10 +409,33 @@ class MainWindow(QMainWindow):
     def _on_tts_toggled(self, state):
         config.ENABLE_TTS = bool(state)
         if not config.ENABLE_TTS and self.tts_worker is not None:
+            self._cancel_delayed_letter()
             self.tts_worker.clear_pending()
+
+    def _cancel_delayed_letter(self):
+        self._tts_delay_timer.stop()
+        self._pending_tts_letter = None
+
+    def _play_delayed_letter(self):
+        letter, self._pending_tts_letter = self._pending_tts_letter, None
+        if letter is not None and self.tts_worker is not None and config.ENABLE_TTS:
+            self.tts_worker.enqueue(letter)
+
+    def _speak_confirmed(self, letter):
+        self._cancel_delayed_letter()
+        if self.tts_worker is None or not config.ENABLE_TTS:
+            return
+        delay_ms = max(0, round(config.MOVEMENT_TTS_DELAY_SECONDS * 1000))
+        if letter in config.MOVEMENT_LETTERS and delay_ms:
+            self.tts_worker.clear_pending()
+            self._pending_tts_letter = letter
+            self._tts_delay_timer.start(delay_ms)
+        else:
+            self.tts_worker.enqueue(letter)
 
     def _repeat_last_letter(self):
         if self._last_confirmed_letter and self.tts_worker is not None:
+            self._cancel_delayed_letter()
             self.tts_worker.enqueue(self._last_confirmed_letter)
 
     # ------------------------------------------------------------------
@@ -467,6 +494,7 @@ class MainWindow(QMainWindow):
             super().keyPressEvent(event)
 
     def closeEvent(self, event):
+        self._cancel_delayed_letter()
         if self.camera_worker is not None:
             self.camera_worker.stop()
             self.camera_worker.wait(1000)
@@ -480,9 +508,15 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    if "--movement" in sys.argv and "--movement-mlp" in sys.argv:
+        raise SystemExit("Escolha --movement (LSTM) ou --movement-mlp (MLP temporal).")
+    if "--movement-mlp" in sys.argv:
+        sys.argv.remove("--movement-mlp")
+        config.ENABLE_MOVEMENT_MLP = True
     if "--movement" in sys.argv:
         sys.argv.remove("--movement")
         config.ENABLE_MOVEMENT = True
+        config.ENABLE_MOVEMENT_MLP = False
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()

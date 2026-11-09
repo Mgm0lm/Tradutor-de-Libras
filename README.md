@@ -8,9 +8,11 @@ não traduz frases ou a gramática de Libras.
 ## Estado e letras suportadas
 
 A versão Python usa **MediaPipe Hands + MLP**, com inferência NumPy. O modelo
-incluído reconhece 21 classes: **A B C D E F G I L M N O P Q R S T U V W Y**.
+por quadro incluído reconhece 24 letras, incluindo J, X e Z. O coletor oferece
+as 26 letras no mesmo CSV. Amostras rotuladas `_` acrescentam uma classe de
+rejeição para poses que não representam letras quando o modelo é treinado de novo.
 Há também um modelo LSTM experimental para **H e J**, ativado sob demanda.
-**K, X e Z** ainda exigem amostras reais. Veja [movimento](docs/MOVIMENTO.md),
+Na LSTM distribuída, K, X e Z ainda não têm pesos treinados. Veja [movimento](docs/MOVIMENTO.md),
 [validação](docs/VALIDATION.md) e [changelog](CHANGELOG.md).
 
 ## Como funciona
@@ -21,11 +23,13 @@ Há também um modelo LSTM experimental para **H e J**, ativado sob demanda.
    produzindo 63 valores. Coleta, treinamento e inferência usam a mesma função.
 4. A MLP aplica camadas densas, ReLU e softmax. Os pesos são lidos de NPZ com
    `allow_pickle=False`; scikit-learn não é necessário para inferir.
-5. Uma classe acima do limiar deve permanecer estável por 0,8 s. Cada posição
+5. Uma letra acima do limiar deve permanecer estável por 0,8 s, ou 0,1 s
+   para H, J, K, X e Z na configuração atual. Cada posição
    contínua confirma uma vez. Para repetir a mesma letra automaticamente,
    interrompa o gesto e aguarde 1,8 s desde a confirmação anterior.
 6. PySide6 exibe vídeo, esqueleto, letra e progresso. gTTS gera áudio e pygame
-   reproduz o cache local. Uma nova confirmação substitui a fala pendente. A câmera e os frames não são enviados ao Google;
+   reproduz o cache local. H, J, K, X e Z aguardam mais 0,5 s antes da fala.
+   Uma nova confirmação substitui a fala pendente. A câmera e os frames não são enviados ao Google;
    a geração de voz envia o texto da letra ao serviço.
 
 ## Executar no Windows
@@ -64,11 +68,15 @@ sobrescrever valores, por exemplo:
 {"ENABLE_TTS": false, "CONF_THRESHOLD_DEFAULT": 0.8}
 ```
 
+`MOVEMENT_MIN_STABLE_SECONDS` ajusta a confirmação por quadro para H, J, K,
+X e Z. `MOVEMENT_TTS_DELAY_SECONDS` ajusta a espera da voz após confirmar
+essas letras, inclusive no modo temporal. Use zero para falar sem essa espera.
+
 A primeira geração de cada áudio requer internet. Os MP3 ficam em `tts_cache/`
 e podem ser reutilizados offline. A pasta deve permitir gravação. Não há envio
 de vídeo na implementação original. Logs locais ficam em `app.log`.
 
-## Coleta e treinamento estático
+## Coleta e treinamento por quadro
 
 ```powershell
 .\venv\Scripts\python.exe -m pip install scikit-learn
@@ -83,6 +91,12 @@ de pessoas, sessões, iluminação e câmera são essenciais; separar frames mui
 parecidos entre treino e teste pode inflar a avaliação.
 
 ## Movimento experimental
+
+No Python, o coletor e o treinador também aceitam `--movement` para preparar
+uma MLP temporal de H, J, K, X e Z. Ative esse modelo com
+`python main.py --movement-mlp`. Os pesos são separados da MLP estática e
+da LSTM. Veja os comandos e o formato das amostras em
+[docs/MOVIMENTO.md](docs/MOVIMENTO.md#alternativa-experimental-em-python-mlp-temporal).
 
 Execute `python main.py --movement` ou abra `Iniciar-com-movimento.cmd` no
 pacote que inclui a LSTM. O modelo distribuído trabalha com H e J. Uma posição
