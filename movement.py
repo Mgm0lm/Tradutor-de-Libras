@@ -6,12 +6,29 @@ import numpy as np
 from landmarks_utils import normalize_landmarks, resample_sequence
 
 STEPS = 20
+TRAJECTORY_FEATURES = 65
+REJECT_LABEL = "_"
 MIN_SPAN = 0.25
 MAX_SPAN = 2.0
 QUIET = 0.18
 PRE_ROLL = 0.12
 SPEED_THRESHOLD = 0.65
 MAX_GAP = 0.35
+
+
+def load_samples(directory, labels, features):
+    """Read one complete gesture per NPY file, in capture order within a class."""
+    data = {}
+    for letter in labels:
+        sequences = []
+        for path in sorted((directory / letter).glob("*.npy")):
+            sample = np.load(path, allow_pickle=False)
+            if sample.shape != (STEPS, features) or not np.isfinite(sample).all():
+                raise ValueError(f"Amostra inválida: {path}. Esperado: {STEPS} × {features} valores finitos.")
+            sequences.append(sample.astype(np.float32))
+        if sequences:
+            data[letter] = sequences
+    return data
 
 
 def sequence_features(samples, features):
@@ -25,6 +42,12 @@ def sequence_features(samples, features):
     values = np.column_stack((poses, (wrists - wrists[0]) / scale))
     uniform = np.linspace(times[0], times[-1], STEPS)
     return np.column_stack([np.interp(uniform, times, column) for column in values.T]).astype(np.float32)
+
+
+def landmark_sample(xyz, now):
+    points = np.asarray(xyz, dtype=np.float32)
+    scale = max(1e-6, float(np.linalg.norm(points - points[0], axis=1).max()))
+    return now, normalize_landmarks(points), points[0, :2].copy(), scale
 
 
 class MotionSegmenter:
@@ -43,9 +66,7 @@ class MotionSegmenter:
         if xyz is None:
             self.reset()
             return None, False
-        points = np.asarray(xyz, dtype=np.float32)
-        scale = max(1e-6, float(np.linalg.norm(points - points[0], axis=1).max()))
-        current = (now, normalize_landmarks(points), points[0, :2].copy(), scale)
+        current = landmark_sample(xyz, now)
         moving = False
         if self.recent:
             previous = self.recent[-1]
@@ -54,7 +75,7 @@ class MotionSegmenter:
                 self.reset()
             elif dt > 0:
                 shape_change = float(np.linalg.norm(current[1] - previous[1])) / np.sqrt(21)
-                wrist_change = float(np.linalg.norm(current[2] - previous[2])) / max(scale, previous[3])
+                wrist_change = float(np.linalg.norm(current[2] - previous[2])) / max(current[3], previous[3])
                 speed = max(shape_change, wrist_change) / max(0.025, dt)
                 self.speed = 0.55 * self.speed + 0.45 * speed
                 moving = self.speed >= SPEED_THRESHOLD

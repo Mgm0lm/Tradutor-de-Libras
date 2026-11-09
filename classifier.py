@@ -2,7 +2,7 @@
 Thread de inferência do tradutor de LIBRAS: extrai os 21 landmarks da
 mão com o MediaPipe Hands (bem mais leve e robusto a fundo/iluminação
 que um classificador de imagem treinado do zero) e classifica a letra
-com um modelo leve (RandomForest, treinado por train_classifier.py).
+com uma MLP treinada por train_classifier.py.
 
 Roda separada da thread de câmera (ver camera_manager.py), na
 velocidade que o hardware permitir.
@@ -19,7 +19,7 @@ from PySide6.QtCore import QThread, Signal
 
 import config
 from landmarks_utils import mediapipe_landmarks_to_xyz, normalize_landmarks
-from movement import MotionSegmenter, STEPS, sequence_features
+from movement import MotionSegmenter, REJECT_LABEL, STEPS, TRAJECTORY_FEATURES, sequence_features
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +51,11 @@ class MLPNumpy:
     Não depende de scikit-learn nem scipy em tempo de execução."""
 
     def __init__(self, npz_path):
-        data = np.load(npz_path, allow_pickle=False)
-        self.n_layers = int(data["n_layers"])
-        self.classes = [str(c) for c in data["classes"]]
-        self.weights = [data[f"W{i}"] for i in range(self.n_layers)]
-        self.biases = [data[f"b{i}"] for i in range(self.n_layers)]
+        with np.load(npz_path, allow_pickle=False) as data:
+            self.n_layers = int(data["n_layers"])
+            self.classes = [str(c) for c in data["classes"]]
+            self.weights = [data[f"W{i}"] for i in range(self.n_layers)]
+            self.biases = [data[f"b{i}"] for i in range(self.n_layers)]
 
     def predict_proba(self, x):
         a = x
@@ -68,6 +68,33 @@ class MLPNumpy:
         a = a - a.max(axis=1, keepdims=True)
         exp = np.exp(a)
         return exp / exp.sum(axis=1, keepdims=True)
+
+
+class TemporalMLPNumpy(MLPNumpy):
+    """Apply the same MLP to one ordered, flattened gesture window."""
+
+    feature_count = TRAJECTORY_FEATURES
+
+    def __init__(self, npz_path):
+        super().__init__(npz_path)
+        with np.load(npz_path, allow_pickle=False) as data:
+            if int(data["steps"]) != STEPS or int(data["feature_count"]) != self.feature_count:
+                raise ValueError("Formato de sequência incompatível com a MLP temporal")
+        allowed = {*config.MOVEMENT_LETTERS, REJECT_LABEL}
+        if len(self.classes) < 2 or REJECT_LABEL not in self.classes or not set(self.classes) <= allowed:
+            raise ValueError("Classes de movimento incompatíveis")
+        width = STEPS * self.feature_count
+        for weights, bias in zip(self.weights, self.biases):
+            if bias.ndim != 1 or weights.shape != (width, bias.size):
+                raise ValueError("Dimensões de pesos incompatíveis")
+            width = bias.size
+        if not self.weights or width != len(self.classes):
+            raise ValueError("Saída da MLP temporal incompatível")
+
+    def predict_proba(self, sequence):
+        if sequence.shape != (STEPS, self.feature_count):
+            raise ValueError("Formato de sequência incompatível com a MLP temporal")
+        return super().predict_proba(sequence.reshape(1, -1))[0]
 
 
 class LSTMNumpy:
@@ -160,7 +187,7 @@ class LibrasClassifierWorker(QThread):
         if not self._load_model():
             return
 
-        if config.ENABLE_MOVEMENT:
+        if config.selected_movement_model_path() is not None:
             self._load_movement_model()
 
         try:
@@ -242,7 +269,7 @@ class LibrasClassifierWorker(QThread):
         conf = float(probs[best_idx])
         letter = self._labels[best_idx]
         conf_threshold = self._get_conf_threshold()
-        if conf < conf_threshold:
+        if letter == REJECT_LABEL or conf < conf_threshold:
             return None
         return Detection(letter, conf, instant=False)
 
@@ -278,22 +305,26 @@ class LibrasClassifierWorker(QThread):
             return False
 
     def _load_movement_model(self):
+        path = config.selected_movement_model_path()
+        model_class = TemporalMLPNumpy if config.ENABLE_MOVEMENT_MLP else LSTMNumpy
+        train_command = "train_classifier.py --movement" if config.ENABLE_MOVEMENT_MLP else "train_movement_classifier.py"
         try:
-            self._movement_model = LSTMNumpy(config.MOVEMENT_MODEL_PATH)
+            self._movement_model = model_class(path)
             logger.info(
-                "Modelo de gestos carregado com sucesso. Classes: %s",
+                "Modelo de gestos %s carregado. Classes: %s",
+                model_class.__name__,
                 self._movement_model.classes,
             )
         except FileNotFoundError:
             logger.info(
                 "Modelo de gestos não encontrado em %s - app funcionará só com "
-                "letras estáticas. Rode collect_movement.py + "
-                "train_movement_classifier.py pra habilitar H/J/K/X/Z.",
-                config.MOVEMENT_MODEL_PATH,
+                "letras estáticas. Rode collect_landmarks.py --movement e %s.",
+                path,
+                train_command,
             )
             self._movement_model = None
         except Exception:
-            logger.exception("Falha ao carregar o modelo de gestos (%s) - ignorando.", config.MOVEMENT_MODEL_PATH)
+            logger.exception("Falha ao carregar o modelo de gestos (%s) - ignorando.", path)
             self._movement_model = None
 
     def stop(self):

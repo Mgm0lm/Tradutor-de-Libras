@@ -4,6 +4,10 @@ landmarks do MediaPipe Hands.
 
 Uso:
     python collect_landmarks.py
+    python collect_landmarks.py --movement  # sequências de H/J/K/X/Z e rejeição
+
+No modo --movement, segure Espaço durante o gesto, solte para parar e use S
+para salvar. Na coleta por quadro, selecione _ para poses que não são letras.
 
 Controles:
     SETA ESQUERDA/DIREITA (ou A / D)  -> troca a letra "alvo" atual
@@ -33,6 +37,7 @@ o modelo final mais robusto no dia da apresentação (evita treinar só
 com a mão numa posição "perfeita" única).
 """
 
+import argparse
 import csv
 import os
 import time
@@ -42,8 +47,9 @@ import mediapipe as mp
 
 import config
 from landmarks_utils import mediapipe_landmarks_to_xyz, normalize_landmarks
+from movement import REJECT_LABEL
 
-LETTERS_LIST = list(config.LETTERS.values())
+LETTERS_LIST = [*sorted(config.LETTERS.values()), REJECT_LABEL]
 
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
@@ -76,6 +82,16 @@ def append_rows(csv_path, rows):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Coleta de landmarks para Libras")
+    parser.add_argument("--movement", action="store_true", help="Coletar sequências de movimento para MLP ou LSTM")
+    parser.add_argument("--camera", type=int, default=0, help="Índice da câmera")
+    args = parser.parse_args()
+    if args.movement:
+        from collect_movement import collect
+
+        collect(args.camera)
+        return
+
     csv_path = config.DATASET_CSV_PATH
     counts = load_existing_counts(csv_path)
     pending_rows = []  # amostras da sessão atual, ainda não salvas em disco
@@ -83,7 +99,7 @@ def main():
     last_auto_capture = 0.0
     auto_capture_interval = 1.0 / 8  # ~8 amostras/seg no modo "segurar C"
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(args.camera)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
@@ -117,11 +133,12 @@ def main():
                 current_feature = normalize_landmarks(xyz)
 
             target_letter = LETTERS_LIST[target_idx]
+            target_name = "Nula (_)" if target_letter == REJECT_LABEL else target_letter
 
             # --- overlay de texto ---
             hand_status = "MAO DETECTADA" if current_feature is not None else "sem mao"
             hand_color = (80, 220, 80) if current_feature is not None else (60, 60, 220)
-            cv2.putText(frame, f"Letra alvo: {target_letter}", (20, 40),
+            cv2.putText(frame, f"Classe alvo: {target_name}", (20, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
             cv2.putText(frame, f"Amostras salvas: {counts[target_letter]}  (+{sum(1 for r in pending_rows if r[-1] == target_letter)} nao salvas)",
                         (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
@@ -143,7 +160,7 @@ def main():
             # Linux/GTK) - e também A/D como alternativa que SEMPRE
             # funciona, independente de plataforma.
             LEFT_CODES = (2424832, 65361, 81, ord("a"), ord("A"))
-            RIGHT_CODES = (2555904, 65363, 83, ord("d"), ord("D"))
+            RIGHT_CODES = (2555904, 65363, ord("d"), ord("D"))
 
             if key_ascii == 27:  # ESC
                 break

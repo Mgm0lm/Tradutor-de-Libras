@@ -31,9 +31,19 @@ EXTERNAL_DATASET_CSV_PATH = os.path.join(BASE_DIR, "dataset", "landmarks_externa
 MOVEMENT_LETTERS = ["H", "J", "K", "X", "Z"]
 
 MOVEMENT_MODEL_PATH = os.path.join(BASE_DIR, "modelo", "movement_model.npz")
+MOVEMENT_MLP_MODEL_PATH = os.path.join(BASE_DIR, "modelo", "movement_mlp.npz")
 MOVEMENT_DATASET_DIR = os.path.join(BASE_DIR, "dataset", "movement_sequences")
 MOVEMENT_TRAJECTORY_DIR = os.path.join(BASE_DIR, "dataset", "movement_trajectory")
 ENABLE_MOVEMENT = False  # Experimental; opt in through config_override.json.
+ENABLE_MOVEMENT_MLP = False
+
+
+def selected_movement_model_path():
+    if ENABLE_MOVEMENT_MLP:
+        return MOVEMENT_MLP_MODEL_PATH
+    if ENABLE_MOVEMENT:
+        return MOVEMENT_MODEL_PATH
+    return None
 
 # Duração MÁXIMA real (em segundos) de um gesto - funciona como teto de
 # segurança: se a mão não parar de se mover antes disso, classifica com
@@ -70,12 +80,12 @@ MOTION_THRESHOLD = 0.06
 # Confiança mínima do classificador de movimento para aceitar a letra.
 MOVEMENT_CONF_THRESHOLD = 0.70
 
-# Alfabeto estático do LIBRAS suportado (letras que não exigem
-# movimento - faltam H, J, K, X, Z).
+# Classes disponíveis na coleta por quadro. Preserve os IDs originais.
 LETTERS = {
     0: "A", 1: "B", 2: "C", 3: "D", 4: "E", 5: "F", 6: "G", 7: "I",
     8: "L", 9: "M", 10: "N", 11: "O", 12: "P", 13: "Q", 14: "R",
     15: "S", 16: "T", 17: "U", 18: "V", 19: "W", 20: "Y",
+    21: "H", 22: "J", 23: "K", 24: "X", 25: "Z",
 }
 
 # ------------------------------------------------------------------
@@ -96,6 +106,8 @@ CONF_THRESHOLD_STEP = 0.05
 # REGRAS DE ESTABILIZACAO
 # ------------------------------------------------------------------
 MIN_STABLE_SECONDS = 0.8
+# Confirmação da MLP por quadro para H, J, K, X e Z, em segundos.
+MOVEMENT_MIN_STABLE_SECONDS = 0.1
 COOLDOWN_SECONDS = 1.8
 
 # ------------------------------------------------------------------
@@ -112,6 +124,8 @@ MAX_CAMERAS_TO_SCAN = 5
 # ------------------------------------------------------------------
 ENABLE_TTS = True
 TTS_LANG = "pt"
+# Espera após a confirmação de H, J, K, X e Z, em segundos.
+MOVEMENT_TTS_DELAY_SECONDS = 0.5
 TTS_CACHE_DIR = os.path.join(BASE_DIR, "tts_cache")
 
 # ------------------------------------------------------------------

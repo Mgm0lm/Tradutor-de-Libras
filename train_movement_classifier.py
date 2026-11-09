@@ -10,9 +10,8 @@ from torch import nn
 from sklearn.metrics import classification_report
 
 import config
-from movement import STEPS
+from movement import REJECT_LABEL as REJECT, STEPS, load_samples
 
-REJECT = "_"
 SEED = 42
 
 
@@ -25,20 +24,6 @@ class LSTMClassifier(nn.Module):
     def forward(self, x):
         sequence, _ = self.lstm(x)
         return self.fc(sequence[:, -1])
-
-
-def load_samples(directory, features):
-    data = {}
-    for letter in [*config.MOVEMENT_LETTERS, REJECT]:
-        sequences = []
-        for path in sorted((directory / letter).glob('*.npy')):
-            sample = np.load(path, allow_pickle=False)
-            if sample.shape != (STEPS, features) or not np.isfinite(sample).all():
-                raise ValueError(f'Amostra inválida: {path}')
-            sequences.append(sample.astype(np.float32))
-        if sequences:
-            data[letter] = sequences
-    return data
 
 
 def proxy_negatives():
@@ -63,7 +48,7 @@ def main():
     torch.set_num_threads(2)
     features = 63 if args.legacy else 65
     directory = Path(config.MOVEMENT_DATASET_DIR if args.legacy else config.MOVEMENT_TRAJECTORY_DIR)
-    data = load_samples(directory, features)
+    data = load_samples(directory, [*config.MOVEMENT_LETTERS, REJECT], features)
     if args.legacy and REJECT not in data:
         data[REJECT] = list(proxy_negatives())
     missing = [label for label in [*config.MOVEMENT_LETTERS, REJECT] if len(data.get(label, [])) < 10]

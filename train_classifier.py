@@ -18,10 +18,13 @@ empacotamento.
 
 Uso:
     python train_classifier.py
+    python train_classifier.py --movement
 """
 
+import argparse
 import csv
 import os
+from pathlib import Path
 
 import numpy as np
 from sklearn.metrics import classification_report, confusion_matrix
@@ -29,6 +32,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPClassifier
 
 import config
+from movement import REJECT_LABEL, STEPS, TRAJECTORY_FEATURES, load_samples
 
 HIDDEN_LAYER_SIZES = (64, 32)
 
@@ -52,7 +56,7 @@ def load_dataset(csv_paths):
     return np.array(X, dtype=np.float32), np.array(y)
 
 
-def export_weights(clf, labels_sorted, path):
+def export_weights(clf, labels_sorted, path, **metadata):
     """Extrai os pesos brutos da MLPClassifier treinada e salva num
     .npz simples, sem depender de sklearn/scipy pra ler depois."""
     weights = {}
@@ -60,16 +64,70 @@ def export_weights(clf, labels_sorted, path):
         weights[f"W{i}"] = W.astype(np.float32)
         weights[f"b{i}"] = b.astype(np.float32)
 
+    if len(labels_sorted) == 2:
+        # sklearn uses one sigmoid logit for two classes. Softmax([0, z])
+        # gives the same pair of probabilities and keeps the NPZ portable.
+        output = len(clf.coefs_) - 1
+        w_key, b_key = f"W{output}", f"b{output}"
+        weights[w_key] = np.column_stack((np.zeros_like(weights[w_key]), weights[w_key]))
+        weights[b_key] = np.concatenate((np.zeros_like(weights[b_key]), weights[b_key]))
+
     os.makedirs(os.path.dirname(path), exist_ok=True)
     np.savez(
         path,
         n_layers=len(clf.coefs_),
         classes=np.array(labels_sorted),
         **weights,
+        **metadata,
     )
 
 
+def train_movement_mlp(directory, model_path):
+    """Train on ordered windows, keeping each capture whole in its partition."""
+    labels = [*config.MOVEMENT_LETTERS, REJECT_LABEL]
+    data = load_samples(Path(directory), labels, TRAJECTORY_FEATURES)
+    if not any(letter in data for letter in config.MOVEMENT_LETTERS):
+        raise ValueError("Colete gestos com python collect_landmarks.py --movement.")
+    insufficient = [label for label in data if len(data[label]) < 10]
+    if REJECT_LABEL not in data:
+        insufficient.append(REJECT_LABEL)
+    if insufficient:
+        raise ValueError(f"Colete pelo menos 10 sequências para: {', '.join(insufficient)}. Use _ para outros movimentos.")
+
+    train, train_y, test, test_y = [], [], [], []
+    for label, samples in data.items():
+        cut = int(len(samples) * 0.8)
+        train.extend(samples[:cut])
+        train_y.extend([label] * cut)
+        test.extend(samples[cut:])
+        test_y.extend([label] * (len(samples) - cut))
+        print(f"  {label}: {cut} para treino, {len(samples) - cut} para teste")
+    missing = [label for label in config.MOVEMENT_LETTERS if label not in data]
+    if missing:
+        print(f"Sem amostras para: {', '.join(missing)}. Essas letras não serão reconhecidas.")
+
+    width = STEPS * TRAJECTORY_FEATURES
+    X_train = np.asarray(train).reshape(-1, width)
+    X_test = np.asarray(test).reshape(-1, width)
+    clf = MLPClassifier(hidden_layer_sizes=HIDDEN_LAYER_SIZES, max_iter=500, random_state=42)
+    clf.fit(X_train, train_y)
+    print("\nTeste local (últimos 20% de cada classe; sem separação por pessoa/sessão):")
+    print(classification_report(test_y, clf.predict(X_test), zero_division=0))
+    export_weights(clf, clf.classes_, model_path, steps=STEPS, feature_count=TRAJECTORY_FEATURES)
+    print(f"MLP de movimento salva em {model_path}")
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Treina a MLP de Libras")
+    parser.add_argument("--movement", action="store_true", help="Treinar uma MLP separada com sequências de movimento")
+    args = parser.parse_args()
+    if args.movement:
+        try:
+            train_movement_mlp(config.MOVEMENT_TRAJECTORY_DIR, config.MOVEMENT_MLP_MODEL_PATH)
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
+        return
+
     csv_paths = [config.DATASET_CSV_PATH, config.EXTERNAL_DATASET_CSV_PATH]
     existing = [p for p in csv_paths if os.path.exists(p)]
     if not existing:
@@ -80,9 +138,19 @@ def main():
 
     print("Carregando dataset de:")
     X, y = load_dataset(csv_paths)
+    try:
+        train_frame_mlp(X, y, config.MODEL_PATH)
+    except ValueError as error:
+        parser.error(str(error))
+
+
+def train_frame_mlp(X, y, model_path):
+    """Infer the output classes from the labels present in the CSV."""
     print(f"\nTotal: {len(X)} amostras, {len(set(y))} classes.")
 
     counts = {label: int((y == label).sum()) for label in sorted(set(y))}
+    if REJECT_LABEL not in counts:
+        print("Sem amostras da classe nula (_). O treino segue com as letras disponíveis.")
     print("Amostras por letra:")
     for label, n in counts.items():
         marker = "  <- poucas amostras, considere coletar mais" if n < 30 else ""
@@ -125,10 +193,8 @@ def main():
         early_stopping=True,
     )
     clf_final.fit(X, y)
-    labels_sorted_final = sorted(clf_final.classes_.tolist())
-
-    export_weights(clf_final, sorted(clf_final.classes_.tolist()), config.MODEL_PATH)
-    print(f"\nModelo salvo em {config.MODEL_PATH} (pesos brutos, sem sklearn/scipy necessários pra usar)")
+    export_weights(clf_final, clf_final.classes_, model_path)
+    print(f"\nModelo salvo em {model_path} (pesos brutos, sem sklearn/scipy necessários pra usar)")
 
 
 if __name__ == "__main__":
