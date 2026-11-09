@@ -2,6 +2,13 @@
 
 As mudanças são registradas por versão. Datas no formato AAAA-MM-DD.
 
+## 0.3.3 — 2026-11-09
+
+- J fala assim que é confirmada em Python e Rust. H, K, X e Z continuam
+  usando o atraso configurável.
+- A interface Rust usa Qt Widgets e os mesmos estilos e layouts do Python.
+- Rust lê `config_override.json` para ajustar os tempos e as opções de tela.
+
 ## 0.3.2 — 2026-11-09
 
 - Atraso de voz ajustável para H, J, K, X e Z após a confirmação, com padrão
