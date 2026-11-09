@@ -3,6 +3,36 @@ use std::path::Path;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+pub fn is_movement_letter(letter: &str) -> bool {
+    matches!(letter, "H" | "J" | "K" | "X" | "Z")
+}
+
+#[derive(Default)]
+pub struct SpeechSchedule(Option<(f64, String)>);
+
+impl SpeechSchedule {
+    pub fn schedule(&mut self, letter: &str, now: f64, movement_delay: f64) {
+        let delay = if is_movement_letter(letter) {
+            movement_delay
+        } else {
+            0.0
+        };
+        self.0 = Some((now + delay, letter.to_owned()));
+    }
+
+    pub fn take_ready(&mut self, now: f64) -> Option<String> {
+        if self.0.as_ref().is_some_and(|(due, _)| now >= *due) {
+            self.0.take().map(|(_, letter)| letter)
+        } else {
+            None
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.0 = None;
+    }
+}
+
 pub fn normalize(points: &[[f32; 3]; 21]) -> Vec<f32> {
     let mut values: Vec<f32> = points
         .iter()
@@ -88,6 +118,18 @@ impl Mlp {
         }
         softmax(a)
     }
+
+    pub fn classify(&self, x: &[f32], threshold: f32) -> (Option<String>, f32) {
+        let probabilities = self.predict(x);
+        let (index, &confidence) = probabilities
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .unwrap();
+        let label = &self.classes[index];
+        let letter = (label != "_" && confidence >= threshold).then(|| label.clone());
+        (letter, confidence)
+    }
 }
 
 #[derive(Default)]
@@ -114,7 +156,11 @@ impl Stabilizer {
             return (None, 0.0, false);
         };
         let held = now - self.since;
-        let progress = (held / hold_seconds).clamp(0.0, 1.0) as f32;
+        let progress = if hold_seconds > 0.0 {
+            (held / hold_seconds).clamp(0.0, 1.0) as f32
+        } else {
+            1.0
+        };
         let confirmed = held >= hold_seconds && !self.confirmed_current && self.confirm(l, now);
         if confirmed {
             self.confirmed_current = true;
@@ -156,5 +202,35 @@ mod tests {
         assert_eq!(s.update(None, 21.0, 0.8).1, 0.0);
         assert!(!s.update(Some("L".into()), 22.0, 0.8).2);
         assert!(s.update(Some("L".into()), 22.81, 0.8).2);
+    }
+
+    #[test]
+    fn delayed_movement_speech_is_replaceable() {
+        let mut speech = SpeechSchedule::default();
+        speech.schedule("H", 0.0, 0.5);
+        assert_eq!(speech.take_ready(0.49), None);
+        assert_eq!(speech.take_ready(0.5).as_deref(), Some("H"));
+        assert_eq!(speech.take_ready(0.6), None);
+        speech.schedule("J", 1.0, 0.5);
+        speech.schedule("A", 1.2, 0.5);
+        assert_eq!(speech.take_ready(1.2).as_deref(), Some("A"));
+        assert_eq!(speech.take_ready(1.5), None);
+        speech.schedule("K", 2.0, 0.5);
+        speech.clear();
+        assert_eq!(speech.take_ready(3.0), None);
+    }
+
+    #[test]
+    fn null_class_rejects_even_at_high_confidence() {
+        let mut model = Mlp {
+            classes: vec!["A".into(), "_".into()],
+            weights: vec![vec![vec![0.0; 2]; 63]],
+            biases: vec![vec![0.0, 12.0]],
+        };
+        let (letter, confidence) = model.classify(&[0.0; 63], 0.7);
+        assert!(confidence > 0.99);
+        assert_eq!(letter, None);
+        model.biases[0].swap(0, 1);
+        assert_eq!(model.classify(&[0.0; 63], 0.7).0.as_deref(), Some("A"));
     }
 }

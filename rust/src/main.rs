@@ -215,9 +215,7 @@ fn start_workers(
                         let label = &model.classes[index];
                         let threshold =
                             f32::from_bits(control.threshold.load(Ordering::Relaxed)).max(0.70);
-                        if *probability >= threshold
-                            && matches!(label.as_str(), "H" | "J" | "K" | "X" | "Z")
-                        {
+                        if *probability >= threshold && model::is_movement_letter(label) {
                             gesture = Some(label.clone());
                         }
                     }
@@ -225,16 +223,8 @@ fn start_workers(
                 if let Some(p) = &points
                     && !moving
                 {
-                    let probs = mlp.predict(&model::normalize(p));
-                    let (best, conf) = probs
-                        .iter()
-                        .enumerate()
-                        .max_by(|a, b| a.1.total_cmp(b.1))
-                        .unwrap();
-                    confidence = *conf;
-                    if confidence >= f32::from_bits(control.threshold.load(Ordering::Relaxed)) {
-                        letter = Some(mlp.classes[best].clone());
-                    }
+                    let threshold = f32::from_bits(control.threshold.load(Ordering::Relaxed));
+                    (letter, confidence) = mlp.classify(&model::normalize(p), threshold);
                 }
                 let fps = 1.0 / start.elapsed().as_secs_f32();
                 if frame.generation == control.camera.load(Ordering::Relaxed) {
@@ -333,6 +323,9 @@ struct App {
     movement_visible_until: f64,
     threshold: f32,
     hold_seconds: f64,
+    movement_hold_seconds: f64,
+    movement_tts_delay: f64,
+    speech_schedule: model::SpeechSchedule,
     desync: bool,
     tts: bool,
     selected: u32,
@@ -398,6 +391,9 @@ impl App {
             movement_visible_until: 0.0,
             threshold: 0.7,
             hold_seconds: 0.8,
+            movement_hold_seconds: 0.1,
+            movement_tts_delay: 0.5,
+            speech_schedule: model::SpeechSchedule::default(),
             desync: true,
             tts: true,
             selected,
@@ -417,6 +413,14 @@ impl App {
     fn request_audio(&self, request: AudioRequest) {
         *self.pending_audio.lock().unwrap() = Some(request);
         let _ = self.audio.try_send(());
+    }
+
+    fn schedule_confirmed_speech(&mut self, letter: &str, now: f64) {
+        if self.tts {
+            self.pending_audio.lock().unwrap().take();
+            self.speech_schedule
+                .schedule(letter, now, self.movement_tts_delay);
+        }
     }
 }
 impl Drop for App {
@@ -454,14 +458,17 @@ impl eframe::App for App {
             self.letter = Some(letter.clone());
             self.confirmed_letter = Some(letter.clone());
             self.progress = 1.0;
-            self.speak(&letter);
+            self.schedule_confirmed_speech(&letter, now);
         }
         if let Some(d) = &detection {
             if d.frame.id != self.last_detection {
                 self.last_detection = d.frame.id;
-                let (l, p, confirmed) =
-                    self.stabilizer
-                        .update(d.letter.clone(), now, self.hold_seconds);
+                let hold_seconds = if d.letter.as_deref().is_some_and(model::is_movement_letter) {
+                    self.movement_hold_seconds
+                } else {
+                    self.hold_seconds
+                };
+                let (l, p, confirmed) = self.stabilizer.update(d.letter.clone(), now, hold_seconds);
                 if confirmed || now >= self.movement_visible_until {
                     self.letter = l;
                     self.progress = p;
@@ -469,8 +476,8 @@ impl eframe::App for App {
                 if confirmed {
                     self.movement_visible_until = 0.0;
                     self.confirmed_letter = self.letter.clone();
-                    if let Some(letter) = self.letter.as_deref() {
-                        self.speak(letter);
+                    if let Some(letter) = self.letter.clone() {
+                        self.schedule_confirmed_speech(&letter, now);
                     }
                 }
             }
@@ -588,6 +595,7 @@ impl eframe::App for App {
                                             self.letter = None;
                                             self.progress = 0.0;
                                             self.movement_visible_until = 0.0;
+                                            self.speech_schedule.clear();
                                         }
                                         ui.checkbox(&mut self.desync, "Dessincronizar câmera / IA");
                                         ui.label("Confiança mín.:");
@@ -604,6 +612,14 @@ impl eframe::App for App {
                                         ui.add(egui::Slider::new(&mut self.hold_seconds, 0.45..=1.20)
                                             .step_by(0.05).fixed_decimals(2).suffix(" s").text("Estabilização"))
                                             .on_hover_text("Tempo de confirmação da letra estática. Tempos menores podem aumentar os falsos positivos.");
+                                    });
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.add(egui::Slider::new(&mut self.movement_hold_seconds, 0.0..=1.20)
+                                            .step_by(0.05).fixed_decimals(2).suffix(" s").text("Confirmação de movimento"))
+                                            .on_hover_text("Tempo de estabilidade por quadro para H, J, K, X e Z.");
+                                        ui.add(egui::Slider::new(&mut self.movement_tts_delay, 0.0..=2.0)
+                                            .step_by(0.05).fixed_decimals(2).suffix(" s").text("Atraso da voz de movimento"))
+                                            .on_hover_text("Espera entre a confirmação de H, J, K, X ou Z e o início da fala.");
                                     });
                                 });
                             ui.label(format!(
@@ -679,10 +695,12 @@ impl eframe::App for App {
                                     .changed()
                                     && !self.tts
                                 {
+                                    self.speech_schedule.clear();
                                     self.request_audio(AudioRequest::Stop);
                                 }
                                 if ui.button("Repetir").clicked() && self.tts {
                                     if let Some(l) = &self.confirmed_letter {
+                                        self.speech_schedule.clear();
                                         self.speak(l);
                                     }
                                 }
@@ -700,6 +718,12 @@ impl eframe::App for App {
                     );
                 });
             });
+        if let Some(letter) = self
+            .speech_schedule
+            .take_ready(self.start.elapsed().as_secs_f64())
+        {
+            self.speak(&letter);
+        }
     }
 }
 

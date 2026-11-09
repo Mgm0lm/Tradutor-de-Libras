@@ -15,8 +15,15 @@ não inicia Python nem depende de um ambiente virtual na máquina de destino.
 
 O controle **Estabilização** ajusta o tempo mínimo para confirmar uma letra
 estática (0,45 a 1,20 s, padrão 0,80 s). Um valor menor responde mais cedo e
-pode aceitar poses transitórias. O modo de movimento decide ao fim do gesto.
-Quando outra letra é confirmada, o WAV mais recente assume a reprodução.
+pode aceitar poses transitórias. **Confirmação de movimento** ajusta o tempo
+por quadro de H, J, K, X e Z (padrão 0,10 s). **Atraso da voz de movimento**
+define a espera após confirmar essas letras (padrão 0,50 s). O modo LSTM decide
+ao fim do gesto e usa o mesmo atraso da voz. Se outra letra for confirmada
+durante a espera, ela substitui a fala pendente. **Repetir** fala imediatamente.
+
+Quando a MLP exportada prevê `_`, o aplicativo descarta o quadro. O modelo
+incluído nesta versão tem 24 letras e ainda não possui essa classe. Para
+ativar a rejeição, colete amostras `_`, treine a MLP no Python e exporte os pesos.
 
 A extração de pontos usa uma implementação nativa de detecção de palma e recorte
 orientado; não é o mesmo grafo de rastreamento da API Python `mp.solutions`.

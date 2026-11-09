@@ -2,6 +2,20 @@
 
 As mudanças são registradas por versão. Datas no formato AAAA-MM-DD.
 
+## 0.3.2 — 2026-11-09
+
+- Atraso de voz ajustável para H, J, K, X e Z após a confirmação, com padrão
+  de 0,50 s em Python e Rust. A nova confirmação substitui a fala pendente.
+- Controles Rust separados para o tempo de confirmação por quadro e o atraso
+  da voz das letras com movimento. A confirmação acompanha os 0,10 s da
+  configuração atual do Python.
+- Coletor Python por quadro com 26 letras e classe nula `_`, mantendo o formato
+  original do CSV. Python e Rust descartam `_` quando o modelo a prevê.
+- Coletor temporal usa segurar Espaço, soltar e salvar com S. A MLP temporal
+  experimental no Python compartilha as sequências com a LSTM.
+- Modelo por quadro atualizado para 24 letras em ambos os formatos. Inclui
+  J, X e Z. H, K e a classe nula dependem de amostras e novo treino.
+
 ## 0.3.1 — 2026-11-08 — Rust
 
 - A fala WAV começa sem esperar o fim do áudio anterior. Desativar o TTS
