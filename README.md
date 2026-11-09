@@ -28,7 +28,8 @@ Na LSTM distribuída, K, X e Z ainda não têm pesos treinados. Veja [movimento]
    contínua confirma uma vez. Para repetir a mesma letra automaticamente,
    interrompa o gesto e aguarde 1,8 s desde a confirmação anterior.
 6. PySide6 exibe vídeo, esqueleto, letra e progresso. gTTS gera áudio e pygame
-   reproduz o cache local. H, J, K, X e Z aguardam mais 0,5 s antes da fala.
+   reproduz o cache local. H, K, X e Z aguardam mais 0,5 s antes da fala.
+   J fala assim que é confirmada.
    Uma nova confirmação substitui a fala pendente. A câmera e os frames não são enviados ao Google;
    a geração de voz envia o texto da letra ao serviço.
 
@@ -70,7 +71,7 @@ sobrescrever valores, por exemplo:
 
 `MOVEMENT_MIN_STABLE_SECONDS` ajusta a confirmação por quadro para H, J, K,
 X e Z. `MOVEMENT_TTS_DELAY_SECONDS` ajusta a espera da voz após confirmar
-essas letras, inclusive no modo temporal. Use zero para falar sem essa espera.
+H, K, X ou Z, inclusive no modo temporal. Use zero para falar sem essa espera.
 
 A primeira geração de cada áudio requer internet. Os MP3 ficam em `tts_cache/`
 e podem ser reutilizados offline. A pasta deve permitir gravação. Não há envio
