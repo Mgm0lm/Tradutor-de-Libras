@@ -39,7 +39,7 @@ def main():
         (bundle / "Iniciar-com-movimento.cmd").write_text(
             '@echo off\nstart "" "%~dp0TradutorLibras.exe" --movement\n', encoding="ascii"
         )
-    for filename in ["README.md", "CHANGELOG.md"]:
+    for filename in ["README.md", "CHANGELOG.md", "config_override.example.json"]:
         shutil.copy2(ROOT / filename, bundle)
     records = {p.relative_to(bundle).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                for p in sorted(bundle.rglob("*")) if p.is_file()}

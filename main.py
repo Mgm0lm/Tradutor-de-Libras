@@ -100,6 +100,29 @@ from stabilizer import LetterStabilizer
 from tts import TTSWorker
 from ui_styles import STYLESHEET
 
+# Tempos em segundos. O config_override.json tem prioridade sobre estes valores.
+# Estabilidade da previsão por quadro antes da confirmação.
+MOVEMENT_MIN_STABLE_SECONDS = {"H": 0.1, "J": 0.05, "K": 0.1, "X": 0, "Z": 0}
+# Espera do TTS após a confirmação. Use 0 para falar imediatamente.
+MOVEMENT_TTS_DELAY_SECONDS = {"H": 0.5, "J": 0.0, "K": 0.5, "X": 0.4, "Z": 0.75}
+# Tempo que X e Z ficam na tela após a confirmação.
+XZ_DISPLAY_HOLD_SECONDS = 1.0
+
+
+def _nonnegative_seconds(value, default):
+    if type(value) not in (int, float) or not -sys.float_info.max <= value <= sys.float_info.max:
+        value = default
+    return max(0.0, value)
+
+
+def _movement_seconds(defaults, override, *, preserve_j=False):
+    # O formato antigo aceitava um único número e mantinha J sem espera no TTS.
+    if not isinstance(override, dict):
+        override = {letter: override for letter in defaults if letter != "J" or not preserve_j}
+    return {letter: _nonnegative_seconds(override.get(letter), default)
+            for letter, default in defaults.items()}
+
+
 logging.basicConfig(
     filename="app.log",
     level=logging.INFO,
@@ -117,7 +140,16 @@ class MainWindow(QMainWindow):
         self.shared_frame = SharedFrame()
         self.camera_worker = None
         self.classifier_worker = None
-        self.stabilizer = LetterStabilizer()
+        self.stabilizer = LetterStabilizer(_movement_seconds(
+            MOVEMENT_MIN_STABLE_SECONDS, getattr(config, "MOVEMENT_MIN_STABLE_SECONDS", None)
+        ))
+        self._movement_tts_delay = _movement_seconds(
+            MOVEMENT_TTS_DELAY_SECONDS, getattr(config, "MOVEMENT_TTS_DELAY_SECONDS", None),
+            preserve_j=True,
+        )
+        self._xz_display_hold = _nonnegative_seconds(
+            getattr(config, "XZ_DISPLAY_HOLD_SECONDS", None), XZ_DISPLAY_HOLD_SECONDS
+        )
         self._movement_visible_until = 0.0
         self.tts_worker = None
         self._pending_tts_letter = None
@@ -131,13 +163,14 @@ class MainWindow(QMainWindow):
         self.stabilizer_confirmed = False
         self._last_shown_qimage = None
         self._cam_fps_count = 0
-        self._cam_fps_last_t = 0.0
-        self._cam_fps_value = 0.0
         self._ai_fps_count = 0
-        self._ai_fps_last_t = 0.0
-        self._ai_fps_value = 0.0
 
         self._build_ui()
+        if config.SHOW_FPS:
+            self._fps_last_t = time.monotonic()
+            self._fps_timer = QTimer(self)
+            self._fps_timer.timeout.connect(self._refresh_fps)
+            self._fps_timer.start(1000)
         self._start_tts()
         self._start_camera(0)
         self._start_classifier()
@@ -167,7 +200,11 @@ class MainWindow(QMainWindow):
         self.video_label.setObjectName("videoLabel")
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setMinimumSize(320, 240)
-        self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.video_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.fps_label = QLabel("Câmera: 0.0 fps   |   IA: 0.0 fps")
+        self.fps_label.setObjectName("subtitulo")
+        self.fps_label.setVisible(config.SHOW_FPS)
+        layout.addWidget(self.fps_label)
         layout.addWidget(self.video_label, stretch=1)
 
         controls = QFrame()
@@ -209,11 +246,6 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.threshold_plus_btn)
 
         layout.addWidget(controls)
-
-        self.fps_label = QLabel("")
-        self.fps_label.setObjectName("subtitulo")
-        self.fps_label.setVisible(config.SHOW_FPS)
-        layout.addWidget(self.fps_label)
 
         self._conf_threshold = config.CONF_THRESHOLD_DEFAULT
         return layout
@@ -280,6 +312,7 @@ class MainWindow(QMainWindow):
             self.camera_worker.wait(1000)
 
         self.shared_frame.clear()
+        self._movement_visible_until = 0.0
         self.camera_worker = CameraWorker(
             camera_index=camera_index,
             target_fps=config.CAMERA_FPS_TARGET,
@@ -300,7 +333,7 @@ class MainWindow(QMainWindow):
 
     def _on_camera_frame(self, frame, frame_id):
         self._last_camera_frame_id = frame_id
-        self._tick_fps("cam")
+        self._cam_fps_count += 1
         if self.desync_checkbox.isChecked():
             self._show_frame(frame, self._last_landmarks_px)
 
@@ -336,11 +369,15 @@ class MainWindow(QMainWindow):
             self.classifier_worker.set_conf_threshold(self._conf_threshold)
 
     def _on_detection(self, detection, frame, landmarks_px, frame_id):
-        self._tick_fps("ai")
+        self._ai_fps_count += 1
         self._last_landmarks_px = landmarks_px
 
         if not self.desync_checkbox.isChecked():
             self._show_frame(frame, landmarks_px)
+
+        now = time.monotonic()
+        if now < self._movement_visible_until and self._last_confirmed_letter in ("X", "Z"):
+            return
 
         if detection is not None and detection.instant:
             # Letra de MOVIMENTO (H/J/K/X/Z): o gesto inteiro já foi
@@ -348,15 +385,13 @@ class MainWindow(QMainWindow):
             # parado" de novo como as estáticas. Confirma direto,
             # respeitando o mesmo cooldown do estabilizador pra não
             # falar a mesma letra em sequência por engano.
-            now = time.monotonic()
             if self.stabilizer.confirm(detection.letter, now):
                 self.stabilizer.reset()
-                self._movement_visible_until = now + 0.65
                 self._update_letter_ui(detection.letter, 1.0, confirmed=True)
-                self._speak_confirmed(detection.letter)
+                self._finish_confirmation(detection.letter, now, sequence_hold=0.65)
             return
 
-        if time.monotonic() < self._movement_visible_until:
+        if now < self._movement_visible_until:
             return
 
         letter = detection.letter if detection is not None else None
@@ -365,7 +400,12 @@ class MainWindow(QMainWindow):
         self._update_letter_ui(shown_letter, progress, confirmed=(progress >= 1.0 and shown_letter is not None))
 
         if just_confirmed:
-            self._speak_confirmed(shown_letter)
+            self._finish_confirmation(shown_letter, now)
+
+    def _finish_confirmation(self, letter, now, sequence_hold=0.0):
+        hold = self._xz_display_hold if letter in ("X", "Z") else sequence_hold
+        self._movement_visible_until = now + hold
+        self._speak_confirmed(letter)
 
     def _update_letter_ui(self, letter, progress, confirmed):
         self.progress_bar.setValue(int(progress * 100))
@@ -425,8 +465,8 @@ class MainWindow(QMainWindow):
         self._cancel_delayed_letter()
         if self.tts_worker is None or not config.ENABLE_TTS:
             return
-        delay_ms = max(0, round(config.MOVEMENT_TTS_DELAY_SECONDS * 1000))
-        if letter in config.MOVEMENT_LETTERS and letter != "J" and delay_ms:
+        delay_ms = round(min(self._movement_tts_delay.get(letter, 0) * 1000, 2_147_483_647))
+        if delay_ms:
             self.tts_worker.clear_pending()
             self._pending_tts_letter = letter
             self._tts_delay_timer.start(delay_ms)
@@ -463,26 +503,15 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # FPS
     # ------------------------------------------------------------------
-    def _tick_fps(self, which):
-        import time
-        now = time.time()
-        if which == "cam":
-            self._cam_fps_count += 1
-            if now - self._cam_fps_last_t >= 1.0:
-                self._cam_fps_value = self._cam_fps_count / (now - self._cam_fps_last_t)
-                self._cam_fps_count = 0
-                self._cam_fps_last_t = now
-        else:
-            self._ai_fps_count += 1
-            if now - self._ai_fps_last_t >= 1.0:
-                self._ai_fps_value = self._ai_fps_count / (now - self._ai_fps_last_t)
-                self._ai_fps_count = 0
-                self._ai_fps_last_t = now
-
-        if config.SHOW_FPS:
-            self.fps_label.setText(
-                f"Câmera: {self._cam_fps_value:.1f} fps   |   IA: {self._ai_fps_value:.1f} fps"
-            )
+    def _refresh_fps(self):
+        now = time.monotonic()
+        elapsed = now - self._fps_last_t
+        self.fps_label.setText(
+            f"Câmera: {self._cam_fps_count / elapsed:.1f} fps   |   IA: {self._ai_fps_count / elapsed:.1f} fps"
+        )
+        self._cam_fps_count = 0
+        self._ai_fps_count = 0
+        self._fps_last_t = now
 
     # ------------------------------------------------------------------
     # Encerramento

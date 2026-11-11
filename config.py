@@ -106,8 +106,6 @@ CONF_THRESHOLD_STEP = 0.05
 # REGRAS DE ESTABILIZACAO
 # ------------------------------------------------------------------
 MIN_STABLE_SECONDS = 0.8
-# Confirmação da MLP por quadro para H, J, K, X e Z, em segundos.
-MOVEMENT_MIN_STABLE_SECONDS = 0.1
 COOLDOWN_SECONDS = 1.8
 
 # ------------------------------------------------------------------
@@ -124,8 +122,6 @@ MAX_CAMERAS_TO_SCAN = 5
 # ------------------------------------------------------------------
 ENABLE_TTS = True
 TTS_LANG = "pt"
-# Espera após a confirmação de H, K, X e Z, em segundos. J fala sem espera extra.
-MOVEMENT_TTS_DELAY_SECONDS = 0.5
 TTS_CACHE_DIR = os.path.join(BASE_DIR, "tts_cache")
 
 # ------------------------------------------------------------------
@@ -147,7 +143,7 @@ def _apply_overrides():
     if not os.path.exists(CONFIG_OVERRIDE_PATH):
         return
     try:
-        with open(CONFIG_OVERRIDE_PATH, "r", encoding="utf-8") as f:
+        with open(CONFIG_OVERRIDE_PATH, "r", encoding="utf-8-sig") as f:
             overrides = json.load(f)
         for key, value in overrides.items():
             globals()[key] = value
