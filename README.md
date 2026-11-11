@@ -162,9 +162,8 @@ extraída em outro local antes de publicar uma release.
 | `TradutorLibra.spec` | Empacotamento PyInstaller |
 
 Datasets, imagens de treinamento, backups, ambientes virtuais e builds não são
-versionados. O repositório é privado. As licenças das bibliotecas e modelos de
-terceiros continuam aplicáveis; esta importação não atribui uma nova licença ao
-código original nem aos datasets.
+versionados. O código do projeto está sob a [licença MIT](LICENSE). Bibliotecas
+e modelos de terceiros seguem suas respectivas licenças.
 
 ## Versão Rust
 
