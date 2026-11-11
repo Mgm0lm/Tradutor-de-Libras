@@ -17,10 +17,12 @@ não inicia Python nem depende de um ambiente virtual na máquina de destino.
 Os tempos são configurados no mesmo `config_override.json` usado pelo Python.
 No pacote Rust, copie `config_override.example.json` para `config_override.json`
 ao lado do executável e reinicie após editar. `MIN_STABLE_SECONDS` regula a
-estabilização das poses estáticas. `MOVEMENT_MIN_STABLE_SECONDS` regula a de
-H, J, K, X e Z por quadro. `MOVEMENT_TTS_DELAY_SECONDS` regula a espera após
-confirmar H, K, X e Z, inclusive no modo LSTM. J e o botão **Repetir** falam
-sem essa espera. Uma nova confirmação substitui a fala pendente.
+estabilização das poses estáticas. Em `MOVEMENT_MIN_STABLE_SECONDS`, ajuste a
+estabilização por quadro de H, J, K, X e Z individualmente. Em
+`MOVEMENT_TTS_DELAY_SECONDS`, ajuste a espera da voz após a confirmação de
+cada uma dessas letras, inclusive no modo LSTM. J tem espera padrão de 0 s.
+O botão **Repetir** fala imediatamente. Uma nova confirmação substitui a fala
+pendente.
 
 Quando a MLP exportada prevê `_`, o aplicativo descarta o quadro. O modelo
 incluído nesta versão tem 24 letras e ainda não possui essa classe. Para
@@ -57,7 +59,7 @@ dos modelos e do runtime acompanham o pacote.
 ```powershell
 cargo test --manifest-path rust/Cargo.toml --locked
 .\venv\Scripts\python.exe tools/verify_native.py rust/target/release/tradutor-libras.exe
-.\venv\Scripts\python.exe tools/package_release.py rust 0.3.3-beta
+.\venv\Scripts\python.exe tools/package_release.py rust 0.3.4
 ```
 
 Extraia o ZIP e abra `TradutorLibras.exe`, mantendo DLL, plugins Qt, modelos

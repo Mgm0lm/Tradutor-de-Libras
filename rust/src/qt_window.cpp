@@ -59,7 +59,11 @@ public:
         video->setObjectName("videoLabel");
         video->setAlignment(Qt::AlignCenter);
         video->setMinimumSize(320, 240);
-        video->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        video->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+        fps = new QLabel(QStringLiteral("Câmera: 0.0 fps   |   IA: 0.0 fps"));
+        fps->setObjectName("subtitulo");
+        fps->setVisible(settings.show_fps != 0);
+        left->addWidget(fps);
         left->addWidget(video, 1);
 
         auto *controls = new QFrame;
@@ -98,10 +102,6 @@ public:
         controls_layout->addWidget(plus);
         left->addWidget(controls);
 
-        fps = new QLabel;
-        fps->setObjectName("subtitulo");
-        fps->setVisible(settings.show_fps != 0);
-        left->addWidget(fps);
         outer->addLayout(left, 6);
 
         auto *right = new QVBoxLayout;

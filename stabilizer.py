@@ -12,7 +12,8 @@ import config
 
 
 class LetterStabilizer:
-    def __init__(self):
+    def __init__(self, movement_min_stable_seconds):
+        self._movement_min_stable_seconds = movement_min_stable_seconds
         self._current_letter = None
         self._since = None
         self._last_confirmed_letter = None
@@ -39,8 +40,7 @@ class LetterStabilizer:
             return None, 0.0, False
 
         held_for = now - self._since
-        required = (config.MOVEMENT_MIN_STABLE_SECONDS if letter in config.MOVEMENT_LETTERS
-                    else config.MIN_STABLE_SECONDS)
+        required = self._movement_min_stable_seconds.get(letter, config.MIN_STABLE_SECONDS)
         progress = min(1.0, held_for / required) if required > 0 else 1.0
 
         just_confirmed = False

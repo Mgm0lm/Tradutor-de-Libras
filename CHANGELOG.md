@@ -2,6 +2,16 @@
 
 As mudanças são registradas por versão. Datas no formato AAAA-MM-DD.
 
+## 0.3.4 — 2026-11-10
+
+- Os contadores de FPS da câmera e da IA ficam visíveis acima do vídeo em
+  Python e Rust. O tamanho da imagem da webcam acompanha a janela.
+- Python e Rust aceitam tempos individuais de confirmação por quadro e de
+  espera da fala para H, J, K, X e Z.
+- X e Z ficam na tela por 0,6 s após a confirmação, com duração ajustável.
+- `train_classifier.py --edit` exclui letras do treino da MLP por quadro
+  ou temporal.
+
 ## 0.3.3 — 2026-11-09
 
 - J fala assim que é confirmada em Python e Rust. H, K, X e Z continuam

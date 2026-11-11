@@ -3,20 +3,17 @@ use std::path::Path;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+pub const MOVEMENT_LETTERS: [&str; 5] = ["H", "J", "K", "X", "Z"];
+
 pub fn is_movement_letter(letter: &str) -> bool {
-    matches!(letter, "H" | "J" | "K" | "X" | "Z")
+    MOVEMENT_LETTERS.contains(&letter)
 }
 
 #[derive(Default)]
 pub struct SpeechSchedule(Option<(f64, String)>);
 
 impl SpeechSchedule {
-    pub fn schedule(&mut self, letter: &str, now: f64, movement_delay: f64) {
-        let delay = if is_movement_letter(letter) && letter != "J" {
-            movement_delay
-        } else {
-            0.0
-        };
+    pub fn schedule(&mut self, letter: &str, now: f64, delay: f64) {
         self.0 = Some((now + delay, letter.to_owned()));
     }
 
@@ -211,10 +208,11 @@ mod tests {
         assert_eq!(speech.take_ready(0.49), None);
         assert_eq!(speech.take_ready(0.5).as_deref(), Some("H"));
         assert_eq!(speech.take_ready(0.6), None);
-        speech.schedule("J", 0.7, 0.5);
-        assert_eq!(speech.take_ready(0.7).as_deref(), Some("J"));
+        speech.schedule("J", 0.75, 0.25);
+        assert_eq!(speech.take_ready(0.99), None);
+        assert_eq!(speech.take_ready(1.0).as_deref(), Some("J"));
         speech.schedule("X", 1.0, 0.5);
-        speech.schedule("A", 1.2, 0.5);
+        speech.schedule("A", 1.2, 0.0);
         assert_eq!(speech.take_ready(1.2).as_deref(), Some("A"));
         assert_eq!(speech.take_ready(1.5), None);
         speech.schedule("K", 2.0, 0.5);

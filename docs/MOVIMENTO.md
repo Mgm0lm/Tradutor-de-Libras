@@ -10,12 +10,14 @@ treinar com as classes que têm amostras e `python main.py` para executar.
 Um dataset com as 21 classes originais continua válido.
 
 A MLP por quadro pode distinguir poses características. Para H, J, K, X e Z,
-ela pede 0,10 s de estabilidade na configuração atual. Ajuste
-`MOVEMENT_MIN_STABLE_SECONDS` em `config_override.json`. As outras letras usam
-`MIN_STABLE_SECONDS` (0,80 s por padrão). A voz de H, K, X e Z espera mais
-`MOVEMENT_TTS_DELAY_SECONDS` após a confirmação (0,50 s por padrão), inclusive
-nos modos de sequência. J fala na confirmação. Se dois gestos usam a mesma pose e diferem pela ordem ou direção
-do movimento, use a classificação de sequências para compará-los.
+ela pede 0,10 s de estabilidade por padrão. Ajuste o tempo de cada letra em
+`MOVEMENT_MIN_STABLE_SECONDS`. As outras letras usam `MIN_STABLE_SECONDS`
+(0,80 s por padrão). Após a confirmação, a voz espera o tempo definido por
+letra em `MOVEMENT_TTS_DELAY_SECONDS`, inclusive nos modos de sequência.
+O padrão é 0 s para J e 0,50 s para H, K, X e Z. Edite os dicionários em
+`main.py` ou use `config_override.example.json` como modelo para
+`config_override.json`. Se dois gestos usam a mesma pose e diferem pela ordem
+ou direção do movimento, use a classificação de sequências para compará-los.
 
 No coletor por quadro, use a classe **Nula (_)** para salvar poses de mãos
 visíveis que não formam letras, como as transições que mais causam falsos

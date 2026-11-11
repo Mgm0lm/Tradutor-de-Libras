@@ -45,11 +45,6 @@ def main():
     if args.kind == "rust":
         shutil.copy2(ROOT / "rust/target/release/tradutor-libras.exe", bundle / "TradutorLibras.exe")
         deploy_qt(bundle)
-        (bundle / "config_override.example.json").write_text(json.dumps({
-            "MIN_STABLE_SECONDS": 0.8,
-            "MOVEMENT_MIN_STABLE_SECONDS": 0.1,
-            "MOVEMENT_TTS_DELAY_SECONDS": 0.5,
-        }, indent=2) + "\n", encoding="utf-8")
         shutil.copy2(ROOT / "tools/downloads/onnxruntime.dll", bundle)
         for filename in ["landmark_model.json", "palm_detection_mediapipe_2023feb.onnx", "handpose_estimation_mediapipe_2023feb.onnx", "rust-assets.json", "palm-LICENSE", "handpose-LICENSE"]:
             shutil.copy2(ROOT / "modelo" / filename, bundle / "modelo")
@@ -69,7 +64,7 @@ def main():
         (bundle / "Iniciar-com-movimento.cmd").write_text(
             '@echo off\nstart "" "%~dp0TradutorLibras.exe" --movement\n', encoding="ascii"
         )
-    for filename in ["README.md", "CHANGELOG.md"]:
+    for filename in ["README.md", "CHANGELOG.md", "config_override.example.json"]:
         shutil.copy2(ROOT / filename, bundle)
     records = {p.relative_to(bundle).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                for p in sorted(bundle.rglob("*")) if p.is_file()}

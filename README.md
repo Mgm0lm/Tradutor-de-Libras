@@ -23,15 +23,10 @@ Na LSTM distribuída, K, X e Z ainda não têm pesos treinados. Veja [movimento]
    produzindo 63 valores. Coleta, treinamento e inferência usam a mesma função.
 4. A MLP aplica camadas densas, ReLU e softmax. Os pesos são lidos de NPZ com
    `allow_pickle=False`; scikit-learn não é necessário para inferir.
-5. Uma letra acima do limiar deve permanecer estável por 0,8 s, ou 0,1 s
-   para H, J, K, X e Z na configuração atual. Cada posição
-   contínua confirma uma vez. Para repetir a mesma letra automaticamente,
-   interrompa o gesto e aguarde 1,8 s desde a confirmação anterior.
-6. PySide6 exibe vídeo, esqueleto, letra e progresso. gTTS gera áudio e pygame
-   reproduz o cache local. H, K, X e Z aguardam mais 0,5 s antes da fala.
-   J fala assim que é confirmada.
-   Uma nova confirmação substitui a fala pendente. A câmera e os frames não são enviados ao Google;
-   a geração de voz envia o texto da letra ao serviço.
+5. O aplicativo aplica as regras de confiança e estabilidade antes de
+   confirmar a letra e iniciar a espera de exibição ou de fala.
+6. A interface exibe vídeo, esqueleto, letra e progresso. O gTTS gera o áudio
+   a partir do texto da letra e o aplicativo toca o cache local.
 
 ## Executar no Windows
 
@@ -52,6 +47,8 @@ orientações originais de desenvolvimento; use o arquivo runtime para executar.
 
 - Vídeo à esquerda e letra reconhecida à direita, em tela cheia.
 - Seletor de câmera e opção de dessincronizar vídeo e inferência.
+- Acima do vídeo, os contadores mostram separadamente os quadros por segundo
+  da câmera e da IA. Use `"SHOW_FPS": false` no JSON para ocultá-los.
 - Botões +/− alteram o limiar de confiança (padrão 0,70).
 - Azul indica detecção; verde indica confirmação.
 - A opção de voz habilita/desabilita a fala; **Repetir** toca a última letra.
@@ -60,18 +57,38 @@ orientações originais de desenvolvimento; use o arquivo runtime para executar.
 Boa iluminação, mão inteira visível e distância adequada ajudam a detecção.
 A confiança é uma saída do modelo, não uma garantia de acerto.
 
-## Configuração e áudio
+## Regras de detecção, exibição e fala
 
-Os parâmetros estão em `config.py`. Um `config_override.json` local pode
-sobrescrever valores, por exemplo:
+| Regra | Padrão e comportamento |
+|---|---|
+| Limiar de confiança | `CONF_THRESHOLD_DEFAULT` começa em 0,70 e pode ser ajustado pelos botões +/−. Sem mão, com confiança abaixo do limiar ou com previsão da classe nula `_`, o quadro fica sem candidato. |
+| Confirmação das demais letras | `MIN_STABLE_SECONDS` exige 0,8 s de previsão contínua da mesma letra. A contagem recomeça quando a previsão muda ou some. |
+| Confirmação de H, J, K, X e Z | `MOVEMENT_MIN_STABLE_SECONDS` exige 0,1 s por padrão para cada letra na MLP por quadro. Os tempos são individuais. |
+| Repetição automática | Uma previsão contínua confirma uma única vez. Para confirmar a mesma letra em sequência, interrompa a previsão e aguarde pelo menos 1,8 s desde a confirmação anterior. Em Python, esse intervalo fica em `COOLDOWN_SECONDS`. |
+| Exibição de X e Z | `XZ_DISPLAY_HOLD_SECONDS` mantém a letra confirmada na tela por 0,6 s. Durante esse intervalo, novas previsões são descartadas e o vídeo continua. O tempo de fala segue em paralelo. Use 0 para desativar. |
+| Fala automática | `MOVEMENT_TTS_DELAY_SECONDS` conta a partir da confirmação, inclusive nos modelos de sequência. O padrão é 0,5 s para H, K, X e Z e 0 s para J. As demais letras falam sem espera adicional. Uma nova confirmação substitui a fala pendente. |
+| Voz e repetição manual | Desligar a voz cancela a fala pendente. Com a voz ligada, **Repetir** toca a última letra confirmada imediatamente. |
 
-```json
-{"ENABLE_TTS": false, "CONF_THRESHOLD_DEFAULT": 0.8}
-```
+Nos modos de sequência, um gesto válido precisa de pelo menos 0,25 s de
+movimento e quatro quadros. A janela encerra após 0,18 s sem movimento ou ao
+chegar a 2 s.
+Ela pode incluir até 0,12 s de quadros anteriores ao início, e um intervalo
+acima de 0,35 s entre quadros reinicia a captura. O classificador usa
+confiança mínima de 0,70 ou o limiar da interface, se for maior. A confirmação
+acontece ao reconhecer a sequência, sem uma espera extra de estabilidade.
+H, J e K reconhecidas por sequência podem ficar visíveis por até 0,65 s
+antes de voltar à indicação por quadro. X e Z seguem a regra de exibição da tabela.
 
-`MOVEMENT_MIN_STABLE_SECONDS` ajusta a confirmação por quadro para H, J, K,
-X e Z. `MOVEMENT_TTS_DELAY_SECONDS` ajusta a espera da voz após confirmar
-H, K, X ou Z, inclusive no modo temporal. Use zero para falar sem essa espera.
+### Como ajustar
+
+No Python, os tempos das letras com movimento ficam em `main.py`, e os
+parâmetros gerais em `config.py`. Nas duas versões, copie
+[`config_override.example.json`](config_override.example.json) para
+`config_override.json` ao lado de `main.py` ou do executável. Edite o arquivo
+e reinicie o aplicativo. O JSON tem prioridade e pode conter apenas as chaves
+e letras que você quer ajustar. Arquivos antigos com um único número para o
+tempo de confirmação ou fala das letras com movimento continuam aceitos e
+mantêm a fala de J imediata.
 
 A primeira geração de cada áudio requer internet. Os MP3 ficam em `tts_cache/`
 e podem ser reutilizados offline. A pasta deve permitir gravação. Não há envio
@@ -84,6 +101,13 @@ de vídeo na implementação original. Logs locais ficam em `app.log`.
 .\venv\Scripts\python.exe collect_landmarks.py
 .\venv\Scripts\python.exe train_classifier.py
 ```
+
+Para excluir letras de um treino, liste-as após `--edit`, separadas por
+espaços. Por exemplo, `python train_classifier.py --edit X Z` ignora X e Z
+nos dois CSVs e gera pesos sem essas classes. As amostras dos CSVs e a classe
+nula `_` continuam disponíveis. Devem sobrar pelo menos duas classes com
+amostras. Para usar os pesos por quadro no Rust, exporte-os depois do treino
+com `python tools/export_models.py`.
 
 O coletor usa setas para escolher a letra, Espaço para capturar, C para captura
 contínua, S para salvar e R para desfazer. O treinamento exporta pesos MLP para
@@ -98,6 +122,9 @@ uma MLP temporal de H, J, K, X e Z. Ative esse modelo com
 `python main.py --movement-mlp`. Os pesos são separados da MLP estática e
 da LSTM. Veja os comandos e o formato das amostras em
 [docs/MOVIMENTO.md](docs/MOVIMENTO.md#alternativa-experimental-em-python-mlp-temporal).
+Use `python train_classifier.py --movement --edit X Z` para excluir X e Z
+apenas da MLP temporal. Cada modelo pode reconhecer as letras que constam
+nos próprios pesos.
 
 Execute `python main.py --movement` ou abra `Iniciar-com-movimento.cmd` no
 pacote que inclui a LSTM. O modelo distribuído trabalha com H e J. Uma posição
@@ -143,5 +170,5 @@ código original nem aos datasets.
 
 O branch `Rust` contém a implementação nativa Windows, instruções de compilação,
 testes e empacotamento em [docs/RUST.md](docs/RUST.md). O aplicativo usa os mesmos
-pesos da MLP e áudios, com interface equivalente em egui. Os resultados e as
+pesos da MLP e áudios, com a interface em Qt Widgets. Os resultados e as
 diferenças do extrator de landmarks estão documentados em `docs/VALIDATION.md`.

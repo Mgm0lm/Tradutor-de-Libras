@@ -4,13 +4,14 @@ mod movement;
 mod qt;
 mod vision;
 use image::RgbImage;
-use model::{Mlp, Result, Stabilizer};
+use model::{MOVEMENT_LETTERS, Mlp, Result, Stabilizer};
 use nokhwa::{
     Camera,
     pixel_format::RgbFormat,
     utils::{ApiBackend, CameraIndex, RequestedFormat, RequestedFormatType},
 };
 use std::{
+    collections::HashMap,
     io::Write,
     path::{Path, PathBuf},
     sync::{
@@ -51,12 +52,37 @@ struct Control {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum MovementSeconds {
+    Shared(f64),
+    ByLetter(HashMap<String, f64>),
+}
+
+impl MovementSeconds {
+    fn resolve(&self, default: f64, j_default: Option<f64>) -> HashMap<&'static str, f64> {
+        MOVEMENT_LETTERS
+            .into_iter()
+            .map(|letter| {
+                let j_default = j_default.filter(|_| letter == "J");
+                let fallback = j_default.unwrap_or(default);
+                let value = match self {
+                    Self::Shared(value) => j_default.unwrap_or(*value),
+                    Self::ByLetter(values) => values.get(letter).copied().unwrap_or(fallback),
+                };
+                (letter, value.max(0.0))
+            })
+            .collect()
+    }
+}
+
+#[derive(serde::Deserialize)]
 #[serde(default, rename_all = "SCREAMING_SNAKE_CASE")]
 struct Settings {
     app_title: String,
     min_stable_seconds: f64,
-    movement_min_stable_seconds: f64,
-    movement_tts_delay_seconds: f64,
+    movement_min_stable_seconds: MovementSeconds,
+    movement_tts_delay_seconds: MovementSeconds,
+    xz_display_hold_seconds: f64,
     conf_threshold_default: f32,
     enable_tts: bool,
     desync_inference: bool,
@@ -69,8 +95,9 @@ impl Default for Settings {
         Self {
             app_title: "Tradutor de LIBRAS - Alfabeto".into(),
             min_stable_seconds: 0.8,
-            movement_min_stable_seconds: 0.1,
-            movement_tts_delay_seconds: 0.5,
+            movement_min_stable_seconds: MovementSeconds::ByLetter(HashMap::new()),
+            movement_tts_delay_seconds: MovementSeconds::ByLetter(HashMap::new()),
+            xz_display_hold_seconds: 0.6,
             conf_threshold_default: 0.7,
             enable_tts: true,
             desync_inference: true,
@@ -87,6 +114,136 @@ impl Settings {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(error.into()),
         }
+    }
+
+    fn movement_hold_times(&self) -> HashMap<&'static str, f64> {
+        self.movement_min_stable_seconds.resolve(0.1, None)
+    }
+
+    fn movement_speech_delays(&self) -> HashMap<&'static str, f64> {
+        self.movement_tts_delay_seconds.resolve(0.5, Some(0.0))
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn per_letter_settings_override_only_listed_letters() {
+        let settings: Settings = serde_json::from_str(
+            r#"{
+                "MOVEMENT_MIN_STABLE_SECONDS": {"H": 0.3, "K": 0.6, "Z": 0},
+                "MOVEMENT_TTS_DELAY_SECONDS": {"J": 0.25, "X": 0.75}
+            }"#,
+        )
+        .unwrap();
+        let hold = settings.movement_hold_times();
+        let speech = settings.movement_speech_delays();
+        assert_eq!(
+            MOVEMENT_LETTERS.map(|letter| hold[letter]),
+            [0.3, 0.1, 0.6, 0.1, 0.0]
+        );
+        assert_eq!(
+            MOVEMENT_LETTERS.map(|letter| speech[letter]),
+            [0.5, 0.25, 0.5, 0.75, 0.5]
+        );
+        assert!(!hold.contains_key("A"));
+        assert!(!speech.contains_key("A"));
+    }
+
+    #[test]
+    fn defaults_and_legacy_shared_settings_keep_j_immediate() {
+        let defaults = Settings::default();
+        let example: Settings =
+            serde_json::from_str(include_str!("../../config_override.example.json")).unwrap();
+        assert_eq!(
+            example.movement_hold_times(),
+            defaults.movement_hold_times()
+        );
+        assert_eq!(
+            example.movement_speech_delays(),
+            defaults.movement_speech_delays()
+        );
+        assert_eq!(
+            example.xz_display_hold_seconds,
+            defaults.xz_display_hold_seconds
+        );
+        let legacy: Settings = serde_json::from_str(
+            r#"{"MOVEMENT_MIN_STABLE_SECONDS": 0.3, "MOVEMENT_TTS_DELAY_SECONDS": 0.7}"#,
+        )
+        .unwrap();
+        let hold = legacy.movement_hold_times();
+        let speech = legacy.movement_speech_delays();
+        assert_eq!(MOVEMENT_LETTERS.map(|letter| hold[letter]), [0.3; 5]);
+        assert_eq!(
+            MOVEMENT_LETTERS.map(|letter| speech[letter]),
+            [0.7, 0.0, 0.7, 0.7, 0.7]
+        );
+    }
+
+    #[test]
+    fn xz_display_hold_discards_candidates_without_delaying_speech() {
+        let settings = Settings::default();
+        let mut app = App {
+            shared: Arc::default(),
+            control: Arc::new(Control {
+                stop: AtomicBool::new(false),
+                camera: AtomicU32::new(0),
+                threshold: AtomicU32::new(0),
+            }),
+            stabilizer: Stabilizer::default(),
+            start: Instant::now(),
+            last_detection: 0,
+            displayed_frame_id: 0,
+            letter: None,
+            confirmed_letter: None,
+            progress: 0.0,
+            movement_visible_until: 0.0,
+            xz_display_hold_seconds: settings.xz_display_hold_seconds,
+            threshold: 0.7,
+            hold_seconds: settings.min_stable_seconds,
+            movement_hold_seconds: settings.movement_hold_times(),
+            movement_tts_delay: settings.movement_speech_delays(),
+            speech_schedule: model::SpeechSchedule::default(),
+            desync: true,
+            tts: true,
+            selected: 0,
+            cameras: Vec::new(),
+            audio: mpsc::sync_channel(1).0,
+            pending_audio: Arc::default(),
+        };
+        let frame = |id, letter: &str| Detection {
+            frame: Frame {
+                id,
+                generation: 0,
+                captured: Instant::now(),
+                image: Arc::new(RgbImage::new(1, 1)),
+            },
+            points: None,
+            letter: Some(letter.into()),
+            fps: 30.0,
+        };
+
+        app.update_recognition(None, Some(&frame(1, "X")), 0.0);
+        app.update_recognition(None, Some(&frame(2, "X")), 0.125);
+        assert_eq!(app.confirmed_letter.as_deref(), Some("X"));
+        app.update_recognition(Some("H".into()), Some(&frame(3, "J")), 0.5);
+        assert_eq!(app.speech_schedule.take_ready(0.624), None);
+        assert_eq!(app.speech_schedule.take_ready(0.625).as_deref(), Some("X"));
+        app.update_recognition(None, None, 0.7);
+        assert_eq!(app.letter.as_deref(), Some("X"));
+        assert_eq!(app.progress, 1.0);
+        app.update_recognition(None, Some(&frame(4, "J")), 0.725);
+        assert_eq!(app.letter.as_deref(), Some("J"));
+        assert_eq!(app.progress, 0.0);
+
+        app.update_recognition(Some("Z".into()), Some(&frame(5, "A")), 1.0);
+        app.update_recognition(Some("H".into()), None, 1.599);
+        assert_eq!(app.letter.as_deref(), Some("Z"));
+        assert_eq!(app.speech_schedule.take_ready(1.599).as_deref(), Some("Z"));
+        app.update_recognition(Some("H".into()), None, 1.6);
+        assert_eq!(app.confirmed_letter.as_deref(), Some("H"));
     }
 }
 
@@ -128,11 +285,14 @@ fn start_workers(
                     Ok(c) => {
                         camera = Some(c);
                         active = Some(wanted);
+                        timer = Instant::now();
+                        count = 0;
                         let mut s = capture_shared.lock().unwrap();
                         s.error = None;
                         s.frame = None;
                         s.detection = None;
                         s.gesture = None;
+                        s.camera_fps = 0.0;
                     }
                     Err(e) => {
                         capture_shared.lock().unwrap().error =
@@ -353,10 +513,11 @@ struct App {
     confirmed_letter: Option<String>,
     progress: f32,
     movement_visible_until: f64,
+    xz_display_hold_seconds: f64,
     threshold: f32,
     hold_seconds: f64,
-    movement_hold_seconds: f64,
-    movement_tts_delay: f64,
+    movement_hold_seconds: HashMap<&'static str, f64>,
+    movement_tts_delay: HashMap<&'static str, f64>,
     speech_schedule: model::SpeechSchedule,
     desync: bool,
     tts: bool,
@@ -423,10 +584,11 @@ impl App {
             confirmed_letter: None,
             progress: 0.0,
             movement_visible_until: 0.0,
+            xz_display_hold_seconds: settings.xz_display_hold_seconds.max(0.0),
             threshold,
             hold_seconds: settings.min_stable_seconds.max(0.0),
-            movement_hold_seconds: settings.movement_min_stable_seconds.max(0.0),
-            movement_tts_delay: settings.movement_tts_delay_seconds.max(0.0),
+            movement_hold_seconds: settings.movement_hold_times(),
+            movement_tts_delay: settings.movement_speech_delays(),
             speech_schedule: model::SpeechSchedule::default(),
             desync: settings.desync_inference,
             tts: settings.enable_tts,
@@ -451,9 +613,24 @@ impl App {
     fn schedule_confirmed_speech(&mut self, letter: &str, now: f64) {
         if self.tts {
             self.pending_audio.lock().unwrap().take();
-            self.speech_schedule
-                .schedule(letter, now, self.movement_tts_delay);
+            let delay = self.movement_tts_delay.get(letter).copied().unwrap_or(0.0);
+            self.speech_schedule.schedule(letter, now, delay);
         }
+    }
+
+    fn finish_confirmation(&mut self, letter: &str, now: f64, sequence_hold: f64) {
+        let hold = if matches!(letter, "X" | "Z") {
+            self.xz_display_hold_seconds
+        } else {
+            sequence_hold
+        };
+        self.movement_visible_until = now + hold;
+        self.confirmed_letter = Some(letter.to_owned());
+        self.schedule_confirmed_speech(letter, now);
+    }
+
+    fn xz_display_locked(&self, now: f64) -> bool {
+        now < self.movement_visible_until && matches!(self.letter.as_deref(), Some("X" | "Z"))
     }
 }
 impl Drop for App {
@@ -500,6 +677,53 @@ impl App {
         }
     }
 
+    fn update_recognition(
+        &mut self,
+        gesture: Option<String>,
+        detection: Option<&Detection>,
+        now: f64,
+    ) {
+        if !self.xz_display_locked(now)
+            && let Some(letter) = gesture
+            && self.stabilizer.confirm(&letter, now)
+        {
+            self.stabilizer.update(None, now, self.hold_seconds);
+            self.finish_confirmation(&letter, now, 0.65);
+            self.letter = Some(letter);
+            self.progress = 1.0;
+        }
+        if self.xz_display_locked(now) {
+            if let Some(d) = detection {
+                self.last_detection = d.frame.id;
+            }
+            return;
+        }
+        if let Some(d) = detection {
+            if d.frame.id != self.last_detection {
+                self.last_detection = d.frame.id;
+                let hold_seconds = d
+                    .letter
+                    .as_deref()
+                    .and_then(|letter| self.movement_hold_seconds.get(letter).copied())
+                    .unwrap_or(self.hold_seconds);
+                let (l, p, confirmed) = self.stabilizer.update(d.letter.clone(), now, hold_seconds);
+                if confirmed && let Some(letter) = &l {
+                    self.finish_confirmation(letter, now, 0.0);
+                }
+                if confirmed || now >= self.movement_visible_until {
+                    self.letter = l;
+                    self.progress = p;
+                }
+            }
+        } else {
+            self.stabilizer.update(None, now, self.hold_seconds);
+            if now >= self.movement_visible_until {
+                self.letter = None;
+                self.progress = 0.0;
+            }
+        }
+    }
+
     fn tick(&mut self, window: &qt::Window) {
         let (camera, detection, error, cam_fps, gesture, model_ready) = {
             let mut state = self.shared.lock().unwrap();
@@ -516,45 +740,11 @@ impl App {
             d.frame.generation == self.selected
                 && d.frame.captured.elapsed() < Duration::from_secs(1)
         });
-        let now = self.start.elapsed().as_secs_f64();
-        if let Some(letter) = gesture
-            && self.stabilizer.confirm(&letter, now)
-        {
-            self.stabilizer.update(None, now, self.hold_seconds);
-            self.movement_visible_until = now + 0.65;
-            self.letter = Some(letter.clone());
-            self.confirmed_letter = Some(letter.clone());
-            self.progress = 1.0;
-            self.schedule_confirmed_speech(&letter, now);
-        }
-        if let Some(d) = &detection {
-            if d.frame.id != self.last_detection {
-                self.last_detection = d.frame.id;
-                let hold_seconds = if d.letter.as_deref().is_some_and(model::is_movement_letter) {
-                    self.movement_hold_seconds
-                } else {
-                    self.hold_seconds
-                };
-                let (l, p, confirmed) = self.stabilizer.update(d.letter.clone(), now, hold_seconds);
-                if confirmed || now >= self.movement_visible_until {
-                    self.letter = l;
-                    self.progress = p;
-                }
-                if confirmed {
-                    self.movement_visible_until = 0.0;
-                    self.confirmed_letter = self.letter.clone();
-                    if let Some(letter) = self.letter.clone() {
-                        self.schedule_confirmed_speech(&letter, now);
-                    }
-                }
-            }
-        } else {
-            self.stabilizer.update(None, now, self.hold_seconds);
-            if now >= self.movement_visible_until {
-                self.letter = None;
-                self.progress = 0.0;
-            }
-        }
+        self.update_recognition(
+            gesture,
+            detection.as_ref(),
+            self.start.elapsed().as_secs_f64(),
+        );
         let displayed = if self.desync {
             camera
                 .as_ref()
@@ -574,6 +764,13 @@ impl App {
             None if model_ready => "Posicione a mão dentro da área guia.".into(),
             None => "Aguardando modelo...".into(),
         });
+        let cam_fps = camera
+            .as_ref()
+            .filter(|frame| {
+                frame.generation == self.selected
+                    && frame.captured.elapsed() < Duration::from_secs(1)
+            })
+            .map_or(0.0, |_| cam_fps);
         let ai_fps = detection.as_ref().map_or(0.0, |result| result.fps);
         let fps = format!("Câmera: {cam_fps:.1} fps   |   IA: {ai_fps:.1} fps");
         window.state(
