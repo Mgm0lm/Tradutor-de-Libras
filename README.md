@@ -8,8 +8,7 @@ não traduz frases ou a gramática de Libras.
 ## Estado e letras suportadas
 
 A versão Python usa **MediaPipe Hands + MLP**, com inferência NumPy. O modelo
-por quadro incluído reconhece 24 letras, incluindo J, X e Z. O coletor oferece
-as 26 letras no mesmo CSV. Amostras rotuladas `_` acrescentam uma classe de
+por quadro incluído reconhece 25 letras, faltando apenas H. O coletor oferece até 26 letras no mesmo CSV (27 classes no total). Amostras rotuladas `_` acrescentam uma classe de
 rejeição para poses que não representam letras quando o modelo é treinado de novo.
 Há também um modelo LSTM experimental para **H e J**, ativado sob demanda.
 Na LSTM distribuída, K, X e Z ainda não têm pesos treinados. Veja [movimento](docs/MOVIMENTO.md),
@@ -32,10 +31,17 @@ Na LSTM distribuída, K, X e Z ainda não têm pesos treinados. Veja [movimento]
 
 Use Python 3.12 x64. No PowerShell, na pasta do projeto:
 
+Crie o ambiente virtual
 ```powershell
 py -3.12 -m venv venv
-.\venv\Scripts\python.exe -m pip install -r requirements-runtime.txt
-.\venv\Scripts\python.exe main.py
+```
+Instale as dependências 
+```powershell
+python -m pip install -r requirements-runtime.txt
+```
+Execute o programa
+```powershell
+python ./main.py
 ```
 
 O modelo `modelo/landmark_model.npz` está incluído. MediaPipe 0.10.21 é fixado
@@ -96,10 +102,17 @@ de vídeo na implementação original. Logs locais ficam em `app.log`.
 
 ## Coleta e treinamento por quadro
 
+Instale a dependência 
 ```powershell
-.\venv\Scripts\python.exe -m pip install scikit-learn
-.\venv\Scripts\python.exe collect_landmarks.py
-.\venv\Scripts\python.exe train_classifier.py
+python -m pip install scikit-learn
+```
+Colete os landmarks 
+```powershell
+python collect_landmarks.py
+```
+Treine a MLP 
+```powershell
+python train_classifier.py
 ```
 
 Para excluir letras de um treino, liste-as após `--edit`, separadas por
@@ -160,10 +173,6 @@ extraída em outro local antes de publicar uma release.
 | `collect_*.py`, `train_*.py` | Ferramentas de dados e treinamento |
 | `modelo/` | Pesos utilizados pelo aplicativo |
 | `TradutorLibra.spec` | Empacotamento PyInstaller |
-
-Datasets, imagens de treinamento, backups, ambientes virtuais e builds não são
-versionados. O código do projeto está sob a [licença MIT](LICENSE). Bibliotecas
-e modelos de terceiros seguem suas respectivas licenças.
 
 ## Versão Rust
 
