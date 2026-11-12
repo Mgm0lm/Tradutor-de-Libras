@@ -1,9 +1,6 @@
 """
 Tradutor de LIBRAS (alfabeto) - webcam de um lado, letra reconhecida
 (com fala via TTS) do outro.
-
-Uso do modelo: repo lucaaslb/cnn-libras (CNN treinada localmente,
-formato Keras 2 / .h5).
 """
 
 import logging

@@ -171,3 +171,8 @@ O branch `Rust` contém a implementação nativa Windows, instruções de compil
 testes e empacotamento em [docs/RUST.md](docs/RUST.md). O aplicativo usa os mesmos
 pesos da MLP e áudios, com a interface em Qt Widgets. Os resultados e as
 diferenças do extrator de landmarks estão documentados em `docs/VALIDATION.md`.
+
+## Notas
+
+Esse projeto só foi possível devido a contribuição dos meus professores e colegas de classe.
+O código utilizado se baseia/foi criado por ferramentas de Inteligência Artificial.

@@ -1,22 +1,10 @@
 """
-Importa um dataset de FOTOS de terceiros (ex: a pasta dataset/ do repo
-https://github.com/lucaaslb/cnn-libras) e converte cada imagem em um
-vetor de landmarks (via MediaPipe Hands), no mesmo formato usado por
-collect_landmarks.py - assim você pode combinar suas próprias amostras
-com um dataset de terceiros bem maior, sem precisar reusar o modelo de
-imagem original deles.
-
-ATENÇÃO (licença): o repo cnn-libras não tem um arquivo de LICENSE
-explícito, ou seja, por padrão os direitos são reservados ao autor.
-Treinar um modelo pessoal pra uma apresentação acadêmica é um uso de
-baixo risco, mas evite redistribuir o dataset em si (ex: não inclua a
-pasta de fotos originais dentro do seu .exe) e credite o repositório
-original nos créditos da apresentação.
-
+Quando duas mãos são detectadas, usa a que tem o centro dos landmarks
+mais próximo do centro da imagem.
 Uso:
-    1. Clone ou baixe o repo: git clone https://github.com/lucaaslb/cnn-libras
+    1. Separe as letras em pastas
     2. Rode:
-        python import_cnn_libras_dataset.py "caminho/para/cnn-libras/dataset"
+        python import_cnn_libras_dataset.py "caminho/para/o/dataset"
     3. O script imprime os nomes de subpasta encontrados ANTES de
        processar tudo - confira se batem com o alfabeto (ver
        FOLDER_ALIASES abaixo, editável se os nomes não baterem).
@@ -49,6 +37,13 @@ def resolve_label(folder_name, valid_letters):
     if upper in valid_letters:
         return upper
     return None
+
+
+def distance_to_image_center_squared(hand_landmarks, width, height):
+    points = hand_landmarks.landmark
+    center_x = sum(point.x for point in points) / len(points)
+    center_y = sum(point.y for point in points) / len(points)
+    return ((center_x - 0.5) * width) ** 2 + ((center_y - 0.5) * height) ** 2
 
 
 def main():
@@ -87,7 +82,7 @@ def main():
 
     with mp.solutions.hands.Hands(
         static_image_mode=True,  # fotos independentes, não vídeo - sem tracking entre frames
-        max_num_hands=1,
+        max_num_hands=2,
         min_detection_confidence=0.5,
     ) as hands:
         for folder in subfolders:
@@ -117,7 +112,11 @@ def main():
                 if not results.multi_hand_landmarks:
                     continue
 
-                hand_landmarks = results.multi_hand_landmarks[0]
+                height, width = image.shape[:2]
+                hand_landmarks = min(
+                    results.multi_hand_landmarks,
+                    key=lambda hand: distance_to_image_center_squared(hand, width, height),
+                )
                 xyz = mediapipe_landmarks_to_xyz(hand_landmarks)
                 feature = normalize_landmarks(xyz)
                 rows.append(list(feature) + [label])
