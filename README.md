@@ -174,8 +174,8 @@ diferenças do extrator de landmarks estão documentados em `docs/VALIDATION.md`
 
 ## Notas
 
-# Esse projeto só foi possível devido a contribuição dos meus professores e colegas de classe.
+* Esse projeto só foi possível devido a contribuição dos meus professores e colegas de classe.
 
-# Parte dos landmarks usados para treinar a MLP foram extraídos de fotos de voluntários.
+* Parte dos landmarks usados para treinar a MLP foram extraídos de fotos de voluntários.
 
-# O código utilizado se baseia/foi criado por ferramentas de Inteligência Artificial.
+* O código utilizado se baseia/foi criado por ferramentas de Inteligência Artificial.
