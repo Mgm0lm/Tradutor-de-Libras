@@ -1,8 +1,7 @@
 # Tradutor de Libras — Alfabeto
 
 Aplicativo Windows que reconhece configurações de mão do alfabeto de Libras
-pela webcam, mostra a letra e a pronuncia em português. A versão original foi
-escrita em Python com auxílio do Claude. Este projeto reconhece letras isoladas;
+pela webcam, mostra a letra e a pronuncia em português. Este projeto reconhece letras isoladas;
 não traduz frases ou a gramática de Libras.
 
 ## Estado e letras suportadas
@@ -31,6 +30,14 @@ Na LSTM distribuída, K, X e Z ainda não têm pesos treinados. Veja [movimento]
 
 Use Python 3.12 x64. No PowerShell, na pasta do projeto:
 
+Clone o repositório 
+```powershell
+git clone https://github.com/Mgm0lm/Tradutor-de-Libras
+```
+Entre no repositório 
+```powershell
+cd Tradutor-de-Libras/
+```
 Crie o ambiente virtual
 ```powershell
 py -3.12 -m venv venv
@@ -101,6 +108,7 @@ e podem ser reutilizados offline. A pasta deve permitir gravação. Não há env
 de vídeo na implementação original. Logs locais ficam em `app.log`.
 
 ## Coleta e treinamento por quadro
+Atenção: É necessário estar dentro de ambiente virtual e dentro da pasta do repositório 
 
 Instale a dependência 
 ```powershell
