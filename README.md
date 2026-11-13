@@ -127,8 +127,8 @@ Para excluir letras de um treino, liste-as após `--edit`, separadas por
 espaços. Por exemplo, `python train_classifier.py --edit X Z` ignora X e Z
 nos dois CSVs e gera pesos sem essas classes. As amostras dos CSVs e a classe
 nula `_` continuam disponíveis. Devem sobrar pelo menos duas classes com
-amostras. Para usar os pesos por quadro no Rust, exporte-os depois do treino
-com `python tools/export_models.py`.
+amostras. Depois do treino, veja como [exportar os pesos para ONNX e atualizar
+o pacote Rust](docs/RUST.md#exportar-a-mlp-treinada).
 
 O coletor usa setas para escolher a letra, Espaço para capturar, C para captura
 contínua, S para salvar e R para desfazer. O treinamento exporta pesos MLP para

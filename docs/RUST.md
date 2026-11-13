@@ -30,6 +30,29 @@ A extração de pontos usa uma implementação nativa de detecção de palma e r
 orientado; não é o mesmo grafo de rastreamento da API Python `mp.solutions`.
 Por isso a equivalência numérica da MLP não garante equivalência de ponta a ponta.
 
+## Exportar a MLP treinada
+
+O Rust 0.3.4 carrega `modelo/landmark_model.json` para reconhecer letras.
+Os arquivos ONNX que acompanham o pacote executam a detecção da palma e dos
+pontos da mão. Para atualizar a MLP do executável, gere o JSON a partir do
+NPZ recém-treinado e copie o JSON para a pasta `modelo` ao lado do executável,
+com o aplicativo fechado. O conversor `python tools/export_models.py` gera
+o JSON no projeto.
+
+Para também gerar um ONNX da própria MLP, execute:
+
+```powershell
+python -m pip install onnx==1.17.0
+python tools/export_mlp_onnx.py
+```
+
+Por padrão, o script lê `modelo/landmark_model.npz` e gera
+`modelo/landmark_model.onnx`. Use `-o` para mudar a saída e
+`--rust-json "caminho/do/pacote/modelo/landmark_model.json"` para gravar,
+no mesmo comando, o JSON aceito pela versão atual do Rust. O ONNX recebe
+lotes de 63 coordenadas já normalizadas e devolve probabilidades na ordem
+das classes guardadas no metadado `classes`.
+
 ## Compilar
 
 Pré-requisitos: Rust MSVC x64, Visual Studio C++ Build Tools, Windows SDK e
